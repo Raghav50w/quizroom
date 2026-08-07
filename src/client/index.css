@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+/* Phone-first during play: the whole game must fit one screen with no
+   scrolling. Answer buttons are full-width tap targets. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
