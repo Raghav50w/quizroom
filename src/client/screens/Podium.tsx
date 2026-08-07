@@ -1,12 +1,15 @@
 import type { RankedPlayer } from "../../shared/game.js";
+import { ShareLink } from "./ShareLink.js";
 
 interface PodiumProps {
   ranked: RankedPlayer[];
   total: number;
+  sharePath?: string;
   onPlayAgain: () => void;
+  onHome: () => void;
 }
 
-export function Podium({ ranked, total, onPlayAgain }: PodiumProps) {
+export function Podium({ ranked, total, sharePath, onPlayAgain, onHome }: PodiumProps) {
   const you = ranked[0]!;
 
   return (
@@ -22,13 +25,24 @@ export function Podium({ ranked, total, onPlayAgain }: PodiumProps) {
         </p>
       </div>
 
-      <button
-        type="button"
-        onClick={onPlayAgain}
-        className="w-full rounded-2xl bg-indigo-600 py-5 text-xl font-bold text-white transition active:scale-[0.99] hover:bg-indigo-700"
-      >
-        Play again
-      </button>
+      {sharePath && <ShareLink path={sharePath} />}
+
+      <div className="flex flex-col gap-3">
+        <button
+          type="button"
+          onClick={onPlayAgain}
+          className="w-full rounded-2xl bg-indigo-600 py-5 text-xl font-bold text-white transition hover:bg-indigo-700 active:scale-[0.99]"
+        >
+          Play again
+        </button>
+        <button
+          type="button"
+          onClick={onHome}
+          className="w-full rounded-2xl border-2 border-slate-200 py-4 text-lg font-medium text-slate-700 transition hover:border-slate-300"
+        >
+          Make another quiz
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,19 @@ if (existsSync(clientDist)) {
     res.sendFile(join(clientDist, "index.html"));
   });
 }
+
+// Last resort: turn an unhandled route error into a 500 instead of a silent
+// hang. Must come after every route, and must take four arguments.
+app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("[server] unhandled route error:", error);
+  if (!res.headersSent) res.status(500).json({ error: "server_error" });
+});
+
+// A rejected promise nobody awaited shouldn't take the process down with it —
+// on a free instance that reads as the whole site randomly 404ing.
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] unhandled rejection:", reason);
+});
 
 app.listen(config.PORT, () => {
   console.log(`listening on http://localhost:${config.PORT}`);

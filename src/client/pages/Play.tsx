@@ -64,6 +64,7 @@ export function Play({ quizId }: { quizId: string }) {
     <Game
       key={`${quizId}-${runId}-${durationMs}`}
       quiz={quiz}
+      sharePath={`/q/${quizId}`}
       durationMs={durationMs}
       onDurationChange={setDurationMs}
       onPlayAgain={() => setRunId((id) => id + 1)}
@@ -73,12 +74,13 @@ export function Play({ quizId }: { quizId: string }) {
 
 interface GameProps {
   quiz: Quiz;
+  sharePath: string;
   durationMs: number;
   onDurationChange: (ms: number) => void;
   onPlayAgain: () => void;
 }
 
-function Game({ quiz, durationMs, onDurationChange, onPlayAgain }: GameProps) {
+function Game({ quiz, sharePath, durationMs, onDurationChange, onPlayAgain }: GameProps) {
   const { state, msLeft, send } = useLocalGame(quiz, durationMs);
 
   const question = state.quiz.questions[state.questionIndex]!;
@@ -93,8 +95,10 @@ function Game({ quiz, durationMs, onDurationChange, onPlayAgain }: GameProps) {
           title={state.quiz.title}
           questionCount={total}
           questionDurationMs={durationMs}
+          sharePath={sharePath}
           onDurationChange={onDurationChange}
           onStart={() => send({ type: "start", at: Date.now() })}
+          onHome={() => navigate("/")}
         />
       );
 
@@ -126,6 +130,14 @@ function Game({ quiz, durationMs, onDurationChange, onPlayAgain }: GameProps) {
       );
 
     case "ended":
-      return <Podium ranked={rankPlayers(state)} total={total} onPlayAgain={onPlayAgain} />;
+      return (
+        <Podium
+          ranked={rankPlayers(state)}
+          total={total}
+          sharePath={sharePath}
+          onPlayAgain={onPlayAgain}
+          onHome={() => navigate("/")}
+        />
+      );
   }
 }
