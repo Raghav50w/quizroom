@@ -2,6 +2,7 @@ import { useRoute } from "./lib/router.js";
 import { Create } from "./pages/Create.js";
 import { Landing } from "./pages/Landing.js";
 import { Play } from "./pages/Play.js";
+import { Room } from "./pages/Room.js";
 
 export function App() {
   const route = useRoute();
@@ -13,6 +14,7 @@ export function App() {
       {route.name === "landing" && <Landing />}
       {route.name === "create" && <Create />}
       {route.name === "play" && <Play quizId={route.quizId} />}
+      {route.name === "room" && <Room code={route.code} />}
     </main>
   );
 }

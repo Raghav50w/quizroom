@@ -1,12 +1,21 @@
+import { useState } from "react";
 import { listMyQuizzes } from "../lib/myQuizzes.js";
 import { navigate } from "../lib/router.js";
 
 /**
- * Join is a dead end until P4, so it stays hidden. Create is the visible path,
- * because a recruiter arrives with no room code.
+ * Big join box, create below. Create stays visible because a recruiter arrives
+ * with no room code.
  */
 export function Landing() {
   const mine = listMyQuizzes();
+  const [code, setCode] = useState("");
+
+  // People type "08241", " 8241 ", or with letters mixed in.
+  const cleaned = code.replace(/\D/g, "").slice(0, 4);
+
+  function join() {
+    if (cleaned.length === 4) navigate(`/r/${cleaned}`);
+  }
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center gap-10 p-6">
@@ -16,6 +25,37 @@ export function Landing() {
           Turn a topic or your notes into a quiz, then play it.
         </p>
       </div>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          join();
+        }}
+        className="rounded-3xl bg-slate-50 p-5"
+      >
+        <label htmlFor="code" className="block text-center text-sm font-medium text-slate-600">
+          Got a room code?
+        </label>
+        <input
+          id="code"
+          value={cleaned}
+          onChange={(event) => setCode(event.target.value)}
+          // inputMode brings up the number pad on a phone, which is the whole
+          // reason room codes are 4 digits.
+          inputMode="numeric"
+          pattern="[0-9]*"
+          autoComplete="off"
+          placeholder="0000"
+          className="mt-3 w-full rounded-2xl border-2 border-slate-200 bg-white py-4 text-center font-mono text-4xl tracking-[0.3em] tabular-nums outline-none focus:border-indigo-500"
+        />
+        <button
+          type="submit"
+          disabled={cleaned.length !== 4}
+          className="mt-3 w-full rounded-2xl bg-slate-900 py-4 text-lg font-bold text-white transition hover:bg-slate-700 disabled:opacity-30"
+        >
+          Join
+        </button>
+      </form>
 
       <div className="flex flex-col gap-3">
         <button

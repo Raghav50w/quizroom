@@ -8,9 +8,12 @@ import { useEffect, useState } from "react";
 export type Route =
   | { name: "landing" }
   | { name: "create" }
-  | { name: "play"; quizId: string };
+  | { name: "play"; quizId: string }
+  | { name: "room"; code: string };
 
 export function parseRoute(path: string): Route {
+  const room = path.match(/^\/r\/(\d{4})\/?$/);
+  if (room?.[1]) return { name: "room", code: room[1] };
   const play = path.match(/^\/q\/([A-Za-z0-9_-]+)\/?$/);
   if (play?.[1]) return { name: "play", quizId: play[1] };
   if (path === "/create") return { name: "create" };

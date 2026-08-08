@@ -1,9 +1,11 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import { existsSync } from "node:fs";
+import { createServer } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
 import { api } from "./routes.js";
+import { attachSockets } from "./socket.js";
 
 /**
  * One process in production: Express serves the React build, the API, and
@@ -46,6 +48,11 @@ process.on("unhandledRejection", (reason) => {
   console.error("[server] unhandled rejection:", reason);
 });
 
-app.listen(config.PORT, () => {
+const server = createServer(app);
+
+// Same server, same port: the API, the React build, and the WebSocket.
+attachSockets(server);
+
+server.listen(config.PORT, () => {
   console.log(`listening on http://localhost:${config.PORT}`);
 });

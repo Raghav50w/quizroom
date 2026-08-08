@@ -13,6 +13,9 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:4000",
       "/healthz": "http://localhost:4000",
+      // ws:true is required — without it the handshake proxies but the
+      // upgrade to WebSocket does not, and the client hangs on connect.
+      "/socket.io": { target: "http://localhost:4000", ws: true },
     },
   },
   build: {

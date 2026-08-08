@@ -9,6 +9,10 @@ interface LobbyProps {
   onDurationChange: (ms: number) => void;
   onStart: () => void;
   onHome: () => void;
+  /** Absent when there's no saved quiz to host a room for. */
+  onHostRoom?: () => void;
+  hosting?: boolean;
+  hostError?: string | null;
 }
 
 const DURATIONS = [10_000, 20_000, 30_000];
@@ -21,6 +25,9 @@ export function Lobby({
   onDurationChange,
   onStart,
   onHome,
+  onHostRoom,
+  hosting = false,
+  hostError = null,
 }: LobbyProps) {
   return (
     <div className="flex h-full flex-col justify-center gap-8 p-6">
@@ -64,8 +71,23 @@ export function Lobby({
           onClick={onStart}
           className="w-full rounded-2xl bg-indigo-600 py-5 text-xl font-bold text-white transition hover:bg-indigo-700 active:scale-[0.99]"
         >
-          Play
+          Play solo
         </button>
+        {onHostRoom && (
+          <button
+            type="button"
+            disabled={hosting}
+            onClick={onHostRoom}
+            className="w-full rounded-2xl bg-slate-900 py-5 text-xl font-bold text-white transition hover:bg-slate-700 active:scale-[0.99] disabled:opacity-40"
+          >
+            {hosting ? "Opening room…" : "Play with friends"}
+          </button>
+        )}
+        {hostError && (
+          <p className="rounded-xl bg-rose-50 p-3 text-center text-sm text-rose-700">
+            {hostError}
+          </p>
+        )}
         <button
           type="button"
           onClick={onHome}

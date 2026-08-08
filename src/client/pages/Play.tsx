@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Quiz } from "../../shared/quiz.js";
 import { DEFAULT_QUESTION_DURATION_MS, rankPlayers } from "../../shared/game.js";
 import { ApiError, fetchQuiz } from "../lib/api.js";
+import { openRoom } from "../lib/room.js";
 import { navigate } from "../lib/router.js";
 import { Lobby } from "../screens/Lobby.js";
 import { Podium } from "../screens/Podium.js";
@@ -82,6 +83,20 @@ interface GameProps {
 
 function Game({ quiz, sharePath, durationMs, onDurationChange, onPlayAgain }: GameProps) {
   const { state, msLeft, send } = useLocalGame(quiz, durationMs);
+  const [hosting, setHosting] = useState(false);
+  const [hostError, setHostError] = useState<string | null>(null);
+
+  async function hostRoom() {
+    setHostError(null);
+    setHosting(true);
+    try {
+      const code = await openRoom(quiz.id, durationMs);
+      navigate(`/r/${code}`);
+    } catch (cause) {
+      setHostError((cause as Error).message);
+      setHosting(false);
+    }
+  }
 
   const question = state.quiz.questions[state.questionIndex]!;
   const total = state.quiz.questions.length;
@@ -99,6 +114,9 @@ function Game({ quiz, sharePath, durationMs, onDurationChange, onPlayAgain }: Ga
           onDurationChange={onDurationChange}
           onStart={() => send({ type: "start", at: Date.now() })}
           onHome={() => navigate("/")}
+          onHostRoom={() => void hostRoom()}
+          hosting={hosting}
+          hostError={hostError}
         />
       );
 

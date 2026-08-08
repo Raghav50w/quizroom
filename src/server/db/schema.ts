@@ -1,8 +1,10 @@
 import {
+  boolean,
   check,
   index,
   integer,
   pgTable,
+  primaryKey,
   smallint,
   text,
   timestamp,
@@ -51,5 +53,47 @@ export const questions = pgTable(
   ],
 );
 
+/**
+ * Rooms and answers exist for post-game stats. A room is written once, when
+ * the game ends — nothing needs them mid-game, since live state is in memory.
+ */
+export const rooms = pgTable(
+  "rooms",
+  {
+    id: varchar("id", { length: 24 }).primaryKey(),
+    code: varchar("code", { length: 4 }).notNull(),
+    quizId: varchar("quiz_id", { length: 24 })
+      .notNull()
+      .references(() => quizzes.id, { onDelete: "cascade" }),
+    playerCount: smallint("player_count").notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("rooms_code_idx").on(table.code)],
+);
+
+export const answers = pgTable(
+  "answers",
+  {
+    roomId: varchar("room_id", { length: 24 })
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    playerId: varchar("player_id", { length: 24 }).notNull(),
+    questionId: varchar("question_id", { length: 24 })
+      .notNull()
+      .references(() => questions.id, { onDelete: "cascade" }),
+    nickname: text("nickname").notNull(),
+    optionIndex: smallint("option_index").notNull(),
+    correct: boolean("correct").notNull(),
+    responseTimeMs: integer("response_time_ms").notNull(),
+  },
+  (table) => [
+    // Friends double-tap. One answer per player per question per room.
+    primaryKey({ columns: [table.roomId, table.playerId, table.questionId] }),
+    check("option_index_range", sql`${table.optionIndex} BETWEEN 0 AND 3`),
+  ],
+);
+
 export type QuizRow = typeof quizzes.$inferSelect;
 export type QuestionRow = typeof questions.$inferSelect;
+export type RoomRow = typeof rooms.$inferSelect;
+export type AnswerRow = typeof answers.$inferSelect;

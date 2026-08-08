@@ -33,6 +33,9 @@ export function Review({
 }: ReviewProps) {
   const [title, setTitle] = useState(initialTitle);
   const [questions, setQuestions] = useState<Question[]>(initialQuestions);
+  // Collapsed by default so creating a quiz for yourself doesn't spoil it.
+  // Manual entry starts empty, so there it has to be open from the start.
+  const [showQuestions, setShowQuestions] = useState(initialQuestions.length === 0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,7 +140,28 @@ export function Review({
         className="mt-2 w-full rounded-2xl border-2 border-slate-200 p-4 text-lg font-medium outline-none focus:border-indigo-500"
       />
 
-      <ul className="mt-8 space-y-6">
+      {questions.length > 0 && (
+        <div className="mt-8 flex items-center justify-between gap-4 rounded-2xl bg-slate-50 p-4">
+          <p className="font-medium text-slate-700">
+            {questions.length} question{questions.length === 1 ? "" : "s"} ready
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowQuestions((open) => !open)}
+            className="shrink-0 rounded-xl border-2 border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300"
+          >
+            {showQuestions ? "Hide questions" : "Check the questions"}
+          </button>
+        </div>
+      )}
+
+      {!showQuestions && (
+        <p className="mt-3 text-center text-sm text-slate-400">
+          Playing this yourself? Save without looking.
+        </p>
+      )}
+
+      <ul hidden={!showQuestions} className="mt-8 space-y-6">
         {questions.map((question, index) => (
           <li
             key={question.id}
@@ -195,7 +219,7 @@ export function Review({
         ))}
       </ul>
 
-      {questions.length < MAX_QUESTIONS && (
+      {showQuestions && questions.length < MAX_QUESTIONS && (
         <button
           type="button"
           onClick={addManual}
@@ -208,7 +232,16 @@ export function Review({
       {invalid.length > 0 && (
         <p className="mt-6 rounded-xl bg-amber-50 p-4 text-sm text-amber-800">
           {invalid.length} question{invalid.length === 1 ? "" : "s"} still need work — each
-          needs a 10-character question and four different answers.
+          needs a 10-character question and four different answers.{" "}
+          {!showQuestions && (
+            <button
+              type="button"
+              onClick={() => setShowQuestions(true)}
+              className="font-semibold underline"
+            >
+              Show them
+            </button>
+          )}
         </p>
       )}
       {error && <p className="mt-4 rounded-xl bg-rose-50 p-4 text-sm text-rose-700">{error}</p>}
