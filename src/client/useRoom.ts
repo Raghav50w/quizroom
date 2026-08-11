@@ -61,12 +61,21 @@ export function useRoom(code: string) {
   }, [code]);
 
   // Display only — the server's deadline is authoritative.
+  //
+  // The remaining time is worked out entirely in server terms
+  // (deadlineAt - serverNow), then counted down using the local clock only to
+  // measure *elapsed* time. The client's absolute clock is never trusted: a PC
+  // running 8 seconds behind would otherwise show 18 on a 10-second timer and
+  // then get cut off at 10 when the server advanced.
   useEffect(() => {
     if (!snapshot || snapshot.phase !== "question") {
       setMsLeft(0);
       return;
     }
-    const tick = () => setMsLeft(Math.max(0, snapshot.deadlineAt - Date.now()));
+    const remainingAtReceipt = snapshot.deadlineAt - snapshot.serverNow;
+    const receivedAt = Date.now();
+    const tick = () =>
+      setMsLeft(Math.max(0, remainingAtReceipt - (Date.now() - receivedAt)));
     tick();
     const interval = setInterval(tick, 100);
     return () => clearInterval(interval);

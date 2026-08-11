@@ -14,11 +14,14 @@ import {
   type QuestionStat,
 } from "../shared/socket.js";
 import {
+  MAX_PLAYERS,
   applyEvent,
   createRoom,
   getRoom,
+  isRejection,
   joinRoom,
   playerIdForToken,
+  scheduleClose,
   snapshotFor,
   type Room,
 } from "./rooms.js";
@@ -114,7 +117,7 @@ async function handleCreate(io: Server, socket: Socket, raw: unknown): Promise<v
   };
 
   const join = joinRoom(room, undefined);
-  if (!join) {
+  if (isRejection(join)) {
     fail(socket, "ROOM_GONE", "Could not open that room.");
     return;
   }
@@ -146,8 +149,14 @@ function handleJoin(io: Server, socket: Socket, raw: unknown): void {
   }
 
   const join = joinRoom(room, payload.playerToken);
-  if (!join) {
-    fail(socket, "GAME_STARTED", "That game has already started.");
+  if (isRejection(join)) {
+    fail(
+      socket,
+      join.rejected,
+      join.rejected === "ROOM_FULL"
+        ? `That room is full (${MAX_PLAYERS} players).`
+        : "That game has already started.",
+    );
     return;
   }
 
@@ -255,6 +264,7 @@ async function persistStats(room: Room): Promise<void> {
   // pass the check and write the room twice.
   if (room.statsPersisted) return;
   room.statsPersisted = true;
+  scheduleClose(room);
   try {
     await recordRoomAnswers(room);
   } catch (error) {

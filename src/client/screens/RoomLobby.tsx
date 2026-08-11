@@ -1,4 +1,4 @@
-import type { Snapshot } from "../../shared/socket.js";
+import { MAX_PLAYERS, type Snapshot } from "../../shared/socket.js";
 
 interface RoomLobbyProps {
   snapshot: Snapshot;
@@ -27,7 +27,7 @@ export function RoomLobby({ snapshot, onStart }: RoomLobbyProps) {
 
       <div>
         <p className="mb-3 text-sm font-medium text-slate-600">
-          {connected.length} {connected.length === 1 ? "player" : "players"} in
+          {connected.length} of {MAX_PLAYERS} {connected.length === 1 ? "player" : "players"} in
         </p>
         <ul className="flex flex-wrap justify-center gap-2">
           {snapshot.players.map((player) => (

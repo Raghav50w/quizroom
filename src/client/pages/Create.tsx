@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Question, Quiz } from "../../shared/quiz.js";
 import { ApiError, generateQuiz, ping } from "../lib/api.js";
+import { loadDraft } from "../lib/draft.js";
 import { navigate } from "../lib/router.js";
 import { Review } from "./Review.js";
 
@@ -17,7 +18,18 @@ type Stage =
  * phone. Everything here is React state; nothing is written until Review posts.
  */
 export function Create() {
-  const [stage, setStage] = useState<Stage>({ name: "input" });
+  // A generation survives Back and refresh: pick up where the tab left off.
+  const [stage, setStage] = useState<Stage>(() => {
+    const draft = loadDraft();
+    return draft
+      ? {
+          name: "review",
+          questions: draft.questions,
+          title: draft.title,
+          sourceMode: draft.sourceMode,
+        }
+      : { name: "input" };
+  });
   const [source, setSource] = useState("");
   const [count, setCount] = useState<(typeof COUNTS)[number]>(10);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +57,10 @@ export function Create() {
       setStage({
         name: "review",
         questions: quiz.questions,
-        title: quiz.title,
+        // The generator titles a quiz from the first line of the source. That
+        // reads fine for "the Roman Empire" and terribly for pasted notes, so
+        // past a sentence or so, leave it blank and make the user name it.
+        title: source.trim().length > 80 ? "" : quiz.title,
         sourceMode: "text",
       });
     } catch (cause) {

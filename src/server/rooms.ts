@@ -6,7 +6,7 @@ import {
   type GameState,
 } from "../shared/game.js";
 import type { Quiz } from "../shared/quiz.js";
-import type { Snapshot } from "../shared/socket.js";
+import { MAX_PLAYERS, type Snapshot } from "../shared/socket.js";
 
 /**
  * In-memory room registry. Rooms do not survive a restart — Render redeploys
@@ -34,6 +34,8 @@ export interface Room {
    * silently multiply every accuracy number.
    */
   statsPersisted?: boolean;
+  /** Eviction timer, armed once the game ends. */
+  closeTimer?: NodeJS.Timeout;
 }
 
 const rooms = new Map<string, Room>();
@@ -57,11 +59,23 @@ function generateCode(): string {
 }
 
 /**
+ * Small on purpose: every transition broadcasts a snapshot per player, and a
+ * leaderboard has to stay readable on a phone. This is a game for a room of
+ * friends, not a lecture hall.
+ *
+ * Re-exported from shared/ so the lobby and the server can never disagree.
+ */
+export { MAX_PLAYERS };
+
+/**
  * Server-issued and tracked per room, so two BraveOtters can't appear
- * mid-demo. Falls back to a numbered name once the pairs run out.
+ * mid-demo. Falls back to a numbered name in the impossible case.
+ *
+ * 16x16 = 256 pairs against at most 8 players, so a single draw collides about
+ * 3% of the time and ten in a row is not going to happen.
  */
 function allocateNickname(room: Room): string {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < 10; attempt++) {
     const adjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)]!;
     const animal = ANIMALS[Math.floor(Math.random() * ANIMALS.length)]!;
     const nickname = `${adjective}${animal}`;
@@ -102,12 +116,23 @@ export interface JoinResult {
   reconnected: boolean;
 }
 
+export type JoinRejection = { rejected: "GAME_STARTED" | "ROOM_FULL" };
+
+export function isRejection(result: JoinResult | JoinRejection): result is JoinRejection {
+  return "rejected" in result;
+}
+
 /**
- * Join, or rejoin with an existing token. Late join is refused by the reducer
- * (it ignores player_joined outside the lobby), so a rejoining player keeps
- * their score while a newcomer mid-game is turned away by the caller.
+ * Join, or rejoin with an existing token.
+ *
+ * A known token always gets back in — reconnecting is checked before both the
+ * phase and the cap, so a player who dropped is never locked out of a game
+ * they are already in, even when the room is full.
  */
-export function joinRoom(room: Room, playerToken?: string): JoinResult | null {
+export function joinRoom(
+  room: Room,
+  playerToken?: string,
+): JoinResult | JoinRejection {
   if (playerToken) {
     for (const [playerId, token] of room.tokens) {
       if (token === playerToken) {
@@ -117,7 +142,8 @@ export function joinRoom(room: Room, playerToken?: string): JoinResult | null {
     }
   }
 
-  if (room.state.phase !== "lobby") return null;
+  if (room.state.phase !== "lobby") return { rejected: "GAME_STARTED" };
+  if (room.tokens.size >= MAX_PLAYERS) return { rejected: "ROOM_FULL" };
 
   const playerId = nanoid(10);
   const token = nanoid(21);
@@ -163,7 +189,21 @@ function syncTimer(room: Room): void {
 
 export function closeRoom(room: Room): void {
   if (room.timer) clearTimeout(room.timer);
+  if (room.closeTimer) clearTimeout(room.closeTimer);
   rooms.delete(room.code);
+}
+
+/**
+ * A finished room is kept around briefly so players can sit on the podium and
+ * a late reconnect still finds it, then dropped — otherwise every game ever
+ * played stays in memory until the process restarts, and the code can never be
+ * reused.
+ */
+const CLOSE_DELAY_MS = 10 * 60 * 1000;
+
+export function scheduleClose(room: Room): void {
+  if (room.closeTimer) return;
+  room.closeTimer = setTimeout(() => closeRoom(room), CLOSE_DELAY_MS);
 }
 
 /** Snapshot for one player. correctIndex stays hidden while the question runs. */
@@ -179,6 +219,7 @@ export function snapshotFor(room: Room, playerId: string, isHost: boolean): Snap
     questionIndex: state.questionIndex,
     totalQuestions: state.quiz.questions.length,
     deadlineAt: state.deadlineAt,
+    serverNow: Date.now(),
     questionDurationMs: state.questionDurationMs,
     question:
       question && state.phase !== "lobby"

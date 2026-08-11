@@ -10,6 +10,12 @@ import type { Phase } from "./game.js";
  * than a crashed room.
  */
 
+/**
+ * Shared so the lobby can show "3 of 8" rather than only finding out when a
+ * ninth person is turned away. The server is still the one that enforces it.
+ */
+export const MAX_PLAYERS = 8;
+
 export const roomCodeSchema = z
   .string()
   // People type "08241", " 8241 ", or with letters mixed in.
@@ -83,6 +89,15 @@ export interface Snapshot {
   questionIndex: number;
   totalQuestions: number;
   deadlineAt: number;
+  /**
+   * The server's clock at the moment this snapshot was built.
+   *
+   * Clients must derive the countdown from (deadlineAt - serverNow) and then
+   * measure elapsed time locally. Subtracting the client's own Date.now() from
+   * deadlineAt shows the wrong number on any machine whose clock has drifted —
+   * an 8-second skew makes a 10-second timer read as 18.
+   */
+  serverNow: number;
   questionDurationMs: number;
   question: QuestionView | null;
   correctIndex: number | null;

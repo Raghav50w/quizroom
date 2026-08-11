@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Question, Quiz } from "../../shared/quiz.js";
 import { questionSchema, quizSchema } from "../../shared/quiz.js";
 import { ApiError, saveQuiz } from "../lib/api.js";
+import { clearDraft, saveDraft } from "../lib/draft.js";
 import { rememberQuiz } from "../lib/myQuizzes.js";
 import { navigate } from "../lib/router.js";
 
@@ -36,6 +37,11 @@ export function Review({
   // Collapsed by default so creating a quiz for yourself doesn't spoil it.
   // Manual entry starts empty, so there it has to be open from the start.
   const [showQuestions, setShowQuestions] = useState(initialQuestions.length === 0);
+
+  // Kept so Back, a refresh, or a misclick doesn't throw away a generation.
+  useEffect(() => {
+    if (questions.length > 0) saveDraft({ title, questions, sourceMode });
+  }, [title, questions, sourceMode]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,6 +109,7 @@ export function Review({
     try {
       const { quiz } = await saveQuiz({ title: draft.title, sourceMode, questions });
       rememberQuiz({ id: quiz.id, title: quiz.title, createdAt: quiz.createdAt });
+      clearDraft();
       navigate(`/q/${quiz.id}`);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Could not reach the server.");
@@ -114,7 +121,16 @@ export function Review({
     <div className="mx-auto w-full max-w-3xl p-6">
       <button
         type="button"
-        onClick={onBack}
+        onClick={() => {
+          // Generating cost an API call and ~15 seconds; one stray click
+          // shouldn't be enough to bin it.
+          const sure =
+            questions.length === 0 ||
+            window.confirm(`Discard these ${questions.length} questions and start again?`);
+          if (!sure) return;
+          clearDraft();
+          onBack();
+        }}
         className="text-sm font-medium text-slate-500 hover:text-slate-800"
       >
         &larr; Start over
