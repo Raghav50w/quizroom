@@ -15,6 +15,11 @@ export async function saveQuiz(quiz: Quiz): Promise<Quiz> {
     ...quiz,
     id,
     createdAt: new Date().toISOString(),
+    // Question ids are assigned here, not trusted from the client — same rule
+    // as the quiz id. They are primary keys, so a client that reused one (a
+    // double-clicked Save, or saving a restored draft twice) would otherwise
+    // collide with an existing row and fail the whole insert.
+    questions: quiz.questions.map((question) => ({ ...question, id: nanoid(12) })),
   };
 
   // One transaction: a quiz row with no questions is not a thing that should

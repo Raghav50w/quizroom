@@ -15,6 +15,11 @@ import { attachSockets } from "./socket.js";
  */
 const app = express();
 
+// Render puts exactly one proxy in front of us. Without this, req.ip is that
+// proxy's address for every visitor — so a per-caller limit would see the whole
+// world as one caller and block everyone at once.
+app.set("trust proxy", 1);
+
 app.use(express.json({ limit: "256kb" }));
 
 // Keeps the Render box awake while someone has the create form open.
