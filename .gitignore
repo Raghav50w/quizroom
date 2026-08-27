@@ -9,3 +9,11 @@ quiz.json
 
 # Interview prep / personal notes
 notes/
+
+# Planning docs — working notes, not part of the project
+*.md
+!README.md
+
+# Test material. Papers and lecture notes aren't ours to republish, and this
+# repo is public.
+*.pdf
