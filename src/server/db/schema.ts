@@ -9,6 +9,7 @@ import {
   text,
   timestamp,
   varchar,
+  vector,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -93,7 +94,32 @@ export const answers = pgTable(
   ],
 );
 
+/**
+ * PDF chunks and their embeddings, for topic-guided retrieval.
+ *
+ * `documentId` is a nanoid minted at upload time — there is no `documents`
+ * table. One would hold a filename and a page count that nothing would ever
+ * read. Retrieval scopes by document, not quiz: chunks exist before a quiz
+ * does, since `saveQuiz` only mints the quiz id at save time.
+ *
+ * No indexes, deliberately. Not the ANN index — IVFFlat on a few hundred rows
+ * costs recall and buys nothing — and not a plain one on `documentId` either,
+ * because Postgres scans a table this small faster than it can consult an index.
+ *
+ * The 768 is pinned here *and* in the embedding request. If they ever drift, the
+ * failure is a database error after paying to embed the whole document.
+ */
+export const chunks = pgTable("chunks", {
+  id: varchar("id", { length: 24 }).primaryKey(),
+  documentId: varchar("document_id", { length: 24 }).notNull(),
+  /** Position in the document. Retrieved chunks are re-sorted by this. */
+  ordinal: smallint("ordinal").notNull(),
+  text: text("text").notNull(),
+  embedding: vector("embedding", { dimensions: 768 }).notNull(),
+});
+
 export type QuizRow = typeof quizzes.$inferSelect;
 export type QuestionRow = typeof questions.$inferSelect;
 export type RoomRow = typeof rooms.$inferSelect;
 export type AnswerRow = typeof answers.$inferSelect;
+export type ChunkRow = typeof chunks.$inferSelect;

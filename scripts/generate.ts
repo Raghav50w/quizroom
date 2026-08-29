@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import { parseArgs } from "node:util";
 import { generateQuiz } from "../src/generator/index.js";
 import { chunkText } from "../src/generator/pdf/chunk.js";
 import { cleanPages } from "../src/generator/pdf/clean.js";
 import { extractPages } from "../src/generator/pdf/extract.js";
+import { selectSource } from "../src/server/rag/retrieve.js";
+import { storeChunks } from "../src/server/rag/store.js";
 
 /**
  * CLI: quiz JSON from the terminal.
@@ -64,11 +67,11 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  if (values.pdf !== undefined) return dumpChunks(values.pdf);
-
-  const source = values.file
-    ? await readFile(values.file, "utf8")
-    : (values.topic ?? values.text)!;
+  const source = values.pdf
+    ? await sourceFromPdf(values.pdf, values.about ?? null)
+    : values.file
+      ? await readFile(values.file, "utf8")
+      : (values.topic ?? values.text)!;
 
   if (source.trim().length === 0) {
     process.stderr.write("Source is empty.\n");
@@ -84,7 +87,13 @@ async function main(): Promise<number> {
   const { quiz, shortfall } = await generateQuiz({
     source,
     count,
-    ...(values.title ? { title: values.title } : {}),
+    // Retrieved excerpts start mid-sentence, so the generator's derive-from-
+    // first-line fallback yields titles like "ng losses. In contrast,". For a
+    // PDF the query — or failing that the filename — is what a human meant.
+    ...(values.title || values.pdf
+      ? { title: values.title || pdfTitle(values.pdf!, values.about) }
+      : {}),
+    ...(values.pdf ? { sourceMode: "pdf" as const } : {}),
     log: (message) => process.stderr.write(`${message}\n`),
   });
 
@@ -98,29 +107,44 @@ async function main(): Promise<number> {
   return 0;
 }
 
-/**
- * TEMPORARY — session A stops here.
- *
- * Prints the cleaned chunks so the extraction and cleaning can be judged by eye
- * before anything gets embedded. Session B replaces this with the real pipeline:
- * embed the chunks, store them, retrieve 4 by `--about`, then generateQuiz.
- *
- * stderr, like every other diagnostic here — stdout stays reserved for payload.
- */
-async function dumpChunks(path: string): Promise<number> {
-  const pages = await extractPages(path);
-  const cleaned = cleanPages(pages);
-  const chunks = chunkText(cleaned);
+/** The query if there was one, else the filename without its extension. */
+function pdfTitle(path: string, about: string | undefined): string {
+  if (about?.trim()) return about.trim();
+  return basename(path, extname(path)).replace(/[_-]+/g, " ").trim();
+}
 
-  process.stderr.write(
-    `${pages.length} pages -> ${cleaned.length} chars cleaned -> ${chunks.length} chunks\n`,
+/**
+ * PDF -> the excerpt the questions get written from.
+ *
+ * Extract and chunk are pure; embedding and retrieval need the database, which
+ * is why they live in server/rag. A script may import both — scripts aren't
+ * generator/, so the rule that generator/ imports nothing from server/ holds.
+ *
+ * Every chunk is embedded and stored, then four are selected. Storing the whole
+ * document rather than only what we retrieve is what makes a second run with a
+ * different --about cheap.
+ */
+async function sourceFromPdf(path: string, about: string | null): Promise<string> {
+  const log = (message: string) => process.stderr.write(`${message}\n`);
+
+  const pages = await extractPages(path);
+  const chunks = chunkText(cleanPages(pages));
+  if (chunks.length === 0) throw new Error("No usable text after cleaning.");
+  log(`${pages.length} pages -> ${chunks.length} chunks`);
+
+  const documentId = await storeChunks(chunks, (ms) =>
+    log(`provider quota reached — waiting ${ms / 1000}s for the next window`),
   );
-  for (const chunk of chunks) {
-    process.stderr.write(
-      `\n${"=".repeat(70)}\nchunk ${chunk.ordinal} (${chunk.text.length} chars)\n${"=".repeat(70)}\n${chunk.text}\n`,
-    );
-  }
-  return 0;
+  log(`embedded and stored as document ${documentId}`);
+
+  const source = await selectSource(documentId, about);
+  log(
+    about
+      ? `retrieved ${source.length} chars for "${about}"`
+      : `sampled ${source.length} chars evenly (no --about given)`,
+  );
+
+  return source;
 }
 
 main()
