@@ -45,8 +45,7 @@ function backoffMs(attempt: number): number {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function callLLM(
-  systemPrompt: string,
-  userPrompt: string,
+  prompt: string,
   options: CallOptions = {},
 ): Promise<string> {
   const url = new URL("chat/completions", ensureTrailingSlash(config.LLM_BASE_URL));
@@ -72,10 +71,9 @@ export async function callLLM(
         body: JSON.stringify({
           model: config.LLM_MODEL,
           temperature: 0.7,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
+          // One message. The rules, the source, and the user's request are a
+          // single prompt — there is no system/user split anywhere here.
+          messages: [{ role: "user", content: prompt }],
         }),
         signal,
       });

@@ -4,7 +4,7 @@ import { dedupe } from "./dedupe.js";
 import { runGate, rawResponseSchema, type RawQuestion } from "./gate.js";
 import { callLLM } from "./llm.js";
 import { extractJson } from "./parse.js";
-import { SYSTEM_PROMPT, buildUserPrompt } from "./prompt.js";
+import { buildPrompt } from "./prompt.js";
 import { shuffleOptions } from "./shuffle.js";
 
 /**
@@ -24,6 +24,8 @@ export interface GenerateOptions {
   count: number;
   title?: string;
   sourceMode?: Quiz["sourceMode"];
+  /** What the user typed in the focus box. Appended as the prompt's last line. */
+  prompt?: string;
   /** Progress and diagnostics. Never stdout — the CLI pipes the payload there. */
   log?: (message: string) => void;
 }
@@ -39,7 +41,7 @@ export async function generateQuiz(options: GenerateOptions): Promise<GenerateRe
   const deadlineAt = Date.now() + TOTAL_JOB_TIMEOUT_MS;
   const asked = Math.min(count + OVERSHOOT, 20);
 
-  const raw = await requestQuestions(source, asked, deadlineAt, log);
+  const raw = await requestQuestions(source, asked, deadlineAt, log, options.prompt);
 
   const { kept, dropped } = runGate(raw);
   for (const drop of dropped) {
@@ -79,12 +81,13 @@ async function requestQuestions(
   asked: number,
   deadlineAt: number,
   log: (message: string) => void,
+  userPrompt?: string,
 ): Promise<unknown[]> {
-  const userPrompt = buildUserPrompt(source, asked);
+  const prompt = buildPrompt(source, asked, userPrompt);
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const completion = await callLLM(SYSTEM_PROMPT, userPrompt, { deadlineAt });
+    const completion = await callLLM(prompt, { deadlineAt });
     try {
       return rawResponseSchema.parse(extractJson(completion)).questions;
     } catch (cause) {

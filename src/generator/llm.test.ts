@@ -35,51 +35,51 @@ afterEach(() => {
 describe("callLLM", () => {
   it("returns the completion on the first success", async () => {
     fetchMock.mockResolvedValue(ok("hello"));
-    await expect(callLLM("sys", "user")).resolves.toBe("hello");
+    await expect(callLLM("prompt")).resolves.toBe("hello");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("retries a 429 and succeeds", async () => {
     fetchMock.mockResolvedValueOnce(fail(429)).mockResolvedValueOnce(ok("hello"));
-    await expect(callLLM("sys", "user")).resolves.toBe("hello");
+    await expect(callLLM("prompt")).resolves.toBe("hello");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("retries a 500 and succeeds", async () => {
     fetchMock.mockResolvedValueOnce(fail(503)).mockResolvedValueOnce(ok("hello"));
-    await expect(callLLM("sys", "user")).resolves.toBe("hello");
+    await expect(callLLM("prompt")).resolves.toBe("hello");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("does not retry a 400 — a bad request is our bug, not weather", async () => {
     fetchMock.mockResolvedValue(fail(400));
-    await expect(callLLM("sys", "user")).rejects.toThrow(LlmError);
+    await expect(callLLM("prompt")).rejects.toThrow(LlmError);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("retries a network failure, then gives up with bounded attempts", async () => {
     fetchMock.mockRejectedValue(new Error("ECONNRESET"));
-    await expect(callLLM("sys", "user")).rejects.toThrow(LlmError);
+    await expect(callLLM("prompt")).rejects.toThrow(LlmError);
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("stops once retries would run past the job deadline", async () => {
     fetchMock.mockResolvedValue(fail(429));
     await expect(
-      callLLM("sys", "user", { deadlineAt: Date.now() - 1 }),
+      callLLM("prompt", { deadlineAt: Date.now() - 1 }),
     ).rejects.toThrow(/deadline/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("gives up on an empty completion without retrying", async () => {
     fetchMock.mockResolvedValue(ok("   "));
-    await expect(callLLM("sys", "user")).rejects.toThrow(/empty/i);
+    await expect(callLLM("prompt")).rejects.toThrow(/empty/i);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("sends the model and auth header the provider expects", async () => {
     fetchMock.mockResolvedValue(ok("hello"));
-    await callLLM("sys", "user");
+    await callLLM("prompt");
 
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toBe("https://example.invalid/v1/chat/completions");
@@ -94,7 +94,7 @@ describe("callLLM", () => {
       return Promise.reject(new Error("aborted"));
     });
     await expect(
-      callLLM("sys", "user", { signal: controller.signal }),
+      callLLM("prompt", { signal: controller.signal }),
     ).rejects.toThrow(/aborted/i);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
