@@ -17,9 +17,6 @@ const envSchema = z.object({
   LLM_BASE_URL: z.string().url(),
   LLM_API_KEY: z.string().min(1),
   LLM_MODEL: z.string().min(1),
-  // Defaulted, not required: this file throws on any missing var, so making it
-  // required would stop the server booting until every deployed .env is updated.
-  EMBEDDING_MODEL: z.string().min(1).default("gemini-embedding-001"),
   GENERATION_ENABLED: z
     .enum(["true", "false"])
     .default("true")

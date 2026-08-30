@@ -1,11 +1,4 @@
 import { config } from "../config.js";
-import {
-  MAX_ATTEMPTS,
-  backoffMs,
-  isRetryable,
-  requestSignal,
-  sleep,
-} from "./retry.js";
 
 /**
  * The single LLM call. One function, one endpoint, no adapters.
@@ -14,6 +7,10 @@ import {
  * hung connection can't hold a generation slot forever, and a total-job deadline
  * so retries can't stack up past it.
  */
+
+const REQUEST_TIMEOUT_MS = 60_000;
+const MAX_ATTEMPTS = 4;
+const BASE_BACKOFF_MS = 500;
 
 export class LlmError extends Error {
   constructor(
@@ -35,6 +32,18 @@ interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: string } }>;
 }
 
+/** Retry on transport failures, 429, and 5xx. A 400 is our bug — don't retry it. */
+function isRetryable(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/** Exponential backoff with full jitter, so parallel retries don't sync up. */
+function backoffMs(attempt: number): number {
+  return Math.random() * BASE_BACKOFF_MS * 2 ** attempt;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function callLLM(
   systemPrompt: string,
   userPrompt: string,
@@ -48,7 +57,10 @@ export async function callLLM(
       throw new LlmError("Generation deadline exceeded");
     }
 
-    const signal = requestSignal(options.signal);
+    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+    const signal = options.signal
+      ? AbortSignal.any([timeout, options.signal])
+      : timeout;
 
     try {
       const response = await fetch(url, {

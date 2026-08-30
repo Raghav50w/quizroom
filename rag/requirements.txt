@@ -1,0 +1,7 @@
+fastapi==0.121.2
+uvicorn[standard]==0.41.0
+python-multipart==0.0.20
+pymupdf==1.27.2
+fastembed==0.8.5
+psycopg[binary]==3.2.13
+pgvector==0.4.2

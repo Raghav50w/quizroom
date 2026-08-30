@@ -21,6 +21,7 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
+    "multer": "^2.3.0",
     "nanoid": "^6.0.1",
     "pg": "^8.22.0",
     "react": "^19.2.8",
@@ -28,12 +29,12 @@
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "tsx": "^4.23.10",
-    "unpdf": "^1.8.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@types/express": "^5.0.6",
+    "@types/multer": "^2.2.0",
     "@types/node": "^26.1.2",
     "@types/pg": "^8.20.4",
     "@types/react": "^19.2.18",

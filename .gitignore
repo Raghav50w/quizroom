@@ -17,3 +17,9 @@ notes/
 # Test material. Papers and lecture notes aren't ours to republish, and this
 # repo is public.
 *.pdf
+
+# Python: virtualenv, bytecode, and test caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
