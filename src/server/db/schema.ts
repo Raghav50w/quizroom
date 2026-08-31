@@ -9,6 +9,7 @@ import {
   text,
   timestamp,
   varchar,
+  vector,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -92,6 +93,34 @@ export const answers = pgTable(
     check("option_index_range", sql`${table.optionIndex} BETWEEN 0 AND 3`),
   ],
 );
+
+/**
+ * PDF chunks and their embeddings.
+ *
+ * Written and read by the Python service in rag/, which uses raw SQL. The
+ * table is defined here anyway so `npm run db:push` stays the one place every
+ * table is managed — Drizzle owns the DDL, Python owns the rows.
+ *
+ * `documentId` is minted at ingest. There is no `documents` table: it would
+ * hold a filename and a page count nothing would ever read. Retrieval scopes
+ * by document because chunks exist before a quiz does — `saveQuiz` only mints
+ * the quiz id at save time.
+ *
+ * No indexes, deliberately. Not the ANN index — IVFFlat on a few hundred rows
+ * costs recall and buys nothing — and not one on `documentId` either.
+ * Measured: a cosine search over 47 rows runs in 0.137 ms on a sequential scan.
+ *
+ * The 384 is pinned here *and* in rag/embed.py. If they drift, the failure is
+ * a database error after embedding an entire document.
+ */
+export const chunks = pgTable("chunks", {
+  id: varchar("id", { length: 24 }).primaryKey(),
+  documentId: varchar("document_id", { length: 24 }).notNull(),
+  /** Position in the document. Retrieved chunks are re-sorted by this. */
+  ordinal: smallint("ordinal").notNull(),
+  text: text("text").notNull(),
+  embedding: vector("embedding", { dimensions: 384 }).notNull(),
+});
 
 export type QuizRow = typeof quizzes.$inferSelect;
 export type QuestionRow = typeof questions.$inferSelect;

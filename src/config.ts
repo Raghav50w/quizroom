@@ -17,6 +17,11 @@ const envSchema = z.object({
   LLM_BASE_URL: z.string().url(),
   LLM_API_KEY: z.string().min(1),
   LLM_MODEL: z.string().min(1),
+  // Defaulted, not required: this file throws on any missing var, so making it
+  // required would stop the server booting until every deployed .env is updated.
+  // In production Node and the Python service share one container, so the
+  // default is where uvicorn listens.
+  RAG_SERVICE_URL: z.string().url().default("http://127.0.0.1:8000"),
   GENERATION_ENABLED: z
     .enum(["true", "false"])
     .default("true")
