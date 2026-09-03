@@ -225,7 +225,14 @@ def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) 
 
 
 def pdf_to_chunks(data: bytes) -> list[Chunk]:
-    """The whole pure pipeline: bytes in, chunks out."""
+    """The whole pure pipeline: bytes in, chunks out.
+
+    `extract_pages` runs first so that a file which is not a PDF at all fails
+    as a PdfError with a code the client understands. Opening the document here
+    to read the page width would raise a raw PyMuPDF exception instead, which
+    surfaces to the user as a generic "generation failed".
+    """
+    pages = extract_pages(data)
     with pymupdf.open(stream=data, filetype="pdf") as doc:
         page_width = doc[0].rect.width if doc.page_count else 0.0
-    return chunk_text(clean(extract_pages(data), page_width))
+    return chunk_text(clean(pages, page_width))

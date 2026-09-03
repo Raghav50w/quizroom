@@ -31,8 +31,11 @@ There are no accounts anywhere. A quiz link is the credential; room membership i
 | Database | PostgreSQL (Neon) with Drizzle ORM |
 | Validation | Zod — one schema shared by CLI, server, and client |
 | LLM | Any OpenAI-compatible endpoint (currently Gemini) |
+| PDF + retrieval | Python service — PyMuPDF, fastembed, pgvector |
 
-One `package.json`, plain folders, no monorepo tooling. In production a single Express process serves the API, the WebSocket, and the React build — one port, one deploy, no CORS.
+One `package.json`, plain folders, no monorepo tooling. In production one Express process serves the API, the WebSocket, and the React build — one port, no CORS.
+
+PDF retrieval runs as a small Python service alongside it. Both live in a single container and it binds to localhost, so it is still one deploy and one cold start; nothing outside the container can reach it. Python because that is where the PDF and embedding libraries are, and embeddings are computed locally — no API key, no quota, no rate limit.
 
 ---
 
@@ -47,7 +50,16 @@ src/
 scripts/
   generate.ts  make a quiz from the terminal
   seed.ts      install the permanent sample quiz
+rag/           Python: PDF -> chunks -> embeddings -> retrieval
+  pdf.py       PyMuPDF extraction, cleaning, chunking
+  embed.py     local embeddings (all-MiniLM-L6-v2, 384 dims)
+  store.py     pgvector reads and writes
+  selection.py even sampling and ordinal ordering
+  main.py      FastAPI: /ingest and /select
 ```
+
+The Drizzle schema owns every table, `rag/` only owns rows — so `npm run db:push`
+remains the one place the database shape is managed.
 
 ### The game is a pure function
 

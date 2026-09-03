@@ -4,25 +4,30 @@ import type { Quiz } from "../shared/quiz.js";
 /**
  * PDF jobs, in a plain Map.
  *
- * A PDF takes 10-60 seconds — extraction, embedding, then generation — which is
- * longer than a held-open request reliably survives behind a proxy. So the route
- * returns an id immediately and the client polls.
+ * A PDF takes 10-60 seconds — reading it in the RAG service, then generation —
+ * which is longer than a held-open request reliably survives behind a proxy, so
+ * the route returns an id immediately and the client polls.
  *
  * In-memory on purpose: a handful of entries at a time, and a restart clearing
  * them is correct behaviour, not data loss. No eviction timer for the same
  * reason — there is nothing here worth reaping.
  */
 
-export type JobStep =
-  | "extracting"
-  | "chunking"
-  | "embedding"
-  | "generating"
-  | "done"
-  | "failed";
+/**
+ * Only the two phases Node can actually observe.
+ *
+ * The RAG service extracts, chunks and embeds inside a single `/ingest` call,
+ * so there is no moment where Node could truthfully say "chunking" — reporting
+ * it would be a progress bar that moves on a timer rather than on the work.
+ */
+export type JobStep = "reading" | "generating" | "done" | "failed";
 
 /** Only the failures the client says something specific about. */
-export type JobError = "no_text_found" | "file_too_large" | "generation_failed";
+export type JobError =
+  | "no_text_found"
+  | "file_too_large"
+  | "too_many_pages"
+  | "generation_failed";
 
 export interface Job {
   step: JobStep;
@@ -35,7 +40,7 @@ const jobs = new Map<string, Job>();
 
 export function createJob(): string {
   const id = nanoid(12);
-  jobs.set(id, { step: "extracting" });
+  jobs.set(id, { step: "reading" });
   return id;
 }
 

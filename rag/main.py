@@ -28,9 +28,17 @@ def healthz() -> dict[str, bool]:
 
 
 @app.post("/ingest")
-async def ingest(file: UploadFile = File(...)) -> dict[str, object]:
+def ingest(file: UploadFile = File(...)) -> dict[str, object]:
+    """Defined with `def`, not `async def`, and that is load-bearing.
+
+    Everything below blocks: PyMuPDF parsing, ONNX inference, and a synchronous
+    database insert. In an `async def` handler that work runs on the event loop
+    and stalls every other request on the process — including the health check —
+    until it finishes. FastAPI runs a sync handler in a threadpool instead, so
+    uploads overlap the way a caller expects.
+    """
     try:
-        chunks = pdf_to_chunks(await file.read())
+        chunks = pdf_to_chunks(file.file.read())
     except PdfError as error:
         # The code travels to the client, which has copy for each one.
         raise HTTPException(status_code=422, detail=error.code) from error
