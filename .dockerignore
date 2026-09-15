@@ -1,0 +1,12 @@
+node_modules
+.venv
+dist
+.git
+.env
+*.pdf
+rag/__pycache__
+rag/.pytest_cache
+.pytest_cache
+notes
+*.md
+!README.md

@@ -51,6 +51,18 @@ async function call(path: string, init: RequestInit): Promise<unknown> {
   try {
     response = await fetch(serviceUrl(path), {
       ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        // Measured, not defensive. Reusing a keep-alive socket against uvicorn
+        // after the multipart upload wedges the *next* request: the server
+        // accepts one reuse, answers it, then never parses anything more on
+        // that socket. Three ingest+select pairs from one process scored 1/3
+        // with keep-alive (run 2's select and run 3's ingest both hung to the
+        // 120s ceiling, with no matching line in the uvicorn access log) and
+        // 3/3 with this header. A fresh TCP connection to localhost costs
+        // nothing next to a ~2.5s embed.
+        connection: "close",
+      },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (cause) {
