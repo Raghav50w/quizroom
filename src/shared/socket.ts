@@ -2,8 +2,7 @@ import { z } from "zod";
 import type { Phase } from "./game.js";
 
 /**
- * The socket contract. Defined here in P4, as planned — freezing it earlier
- * would have been guessing.
+ * The socket contract.
  *
  * Inbound payloads are Zod-validated on the server. That catches our own client
  * bugs, not attackers; a malformed payload should produce a clear error rather
@@ -16,11 +15,8 @@ import type { Phase } from "./game.js";
  */
 export const MAX_PLAYERS = 8;
 
-export const roomCodeSchema = z
-  .string()
-  // People type "08241", " 8241 ", or with letters mixed in.
-  .transform((value) => value.replace(/\D/g, ""))
-  .pipe(z.string().length(4));
+// Exactly four digits. The landing page strips anything else before navigating.
+export const roomCodeSchema = z.string().regex(/^\d{4}$/);
 
 export const createRoomSchema = z.object({
   quizId: z.string().min(1).max(24),
@@ -134,5 +130,4 @@ export const CLIENT_EVENTS = {
   joinRoom: "join_room",
   startGame: "start_game",
   submitAnswer: "submit_answer",
-  requestStats: "request_stats",
 } as const;

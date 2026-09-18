@@ -237,13 +237,3 @@ export function snapshotFor(room: Room, playerId: string, isHost: boolean): Snap
     isHost,
   };
 }
-
-/** Test seam only — rooms are process-local and never enumerated in the app. */
-export function _resetRooms(): void {
-  for (const room of rooms.values()) if (room.timer) clearTimeout(room.timer);
-  rooms.clear();
-}
-
-export function _roomCount(): number {
-  return rooms.size;
-}

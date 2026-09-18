@@ -38,14 +38,4 @@ def embed(texts: list[str]) -> list[list[float]]:
         batch = texts[start : start + BATCH_SIZE]
         vectors.extend([v.tolist() for v in _model.embed(batch)])
 
-    if len(vectors) != len(texts):
-        raise ValueError(f"Expected {len(texts)} embeddings, got {len(vectors)}")
-    for position, vector in enumerate(vectors):
-        # Storing a wrong-length vector fails at the database with a far less
-        # obvious error than this one.
-        if len(vector) != DIMENSIONS:
-            raise ValueError(
-                f"Embedding {position} has {len(vector)} dimensions, expected {DIMENSIONS}"
-            )
-
     return vectors

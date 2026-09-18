@@ -16,9 +16,6 @@ import { sql } from "drizzle-orm";
 /**
  * Quizzes are immutable once saved: no update routes, no expiry, no deletes.
  * The link is the credential.
- *
- * Rooms, players, and answers arrive in P4 — freezing those tables now would be
- * guessing at a schema the state machine hasn't needed yet.
  */
 
 export const quizzes = pgTable("quizzes", {

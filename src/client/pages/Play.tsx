@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Quiz } from "../../shared/quiz.js";
 import { DEFAULT_QUESTION_DURATION_MS, rankPlayers } from "../../shared/game.js";
-import { ApiError, fetchQuiz } from "../lib/api.js";
+import { fetchQuiz } from "../lib/api.js";
 import { openRoom } from "../lib/room.js";
 import { navigate } from "../lib/router.js";
 import { Lobby } from "../screens/Lobby.js";
@@ -21,21 +21,11 @@ export function Play({ quizId }: { quizId: string }) {
   const [runId, setRunId] = useState(0);
 
   useEffect(() => {
-    let cancelled = false;
     setQuiz(null);
     setError(null);
     fetchQuiz(quizId)
-      .then(({ quiz: loaded }) => {
-        if (!cancelled) setQuiz(loaded);
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) {
-          setError(cause instanceof ApiError ? cause.message : "Could not reach the server.");
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
+      .then(({ quiz: loaded }) => setQuiz(loaded))
+      .catch((cause: Error) => setError(cause.message));
   }, [quizId]);
 
   if (error) {
@@ -61,6 +51,7 @@ export function Play({ quizId }: { quizId: string }) {
     );
   }
 
+  // Changing the key throws the old game away and starts a fresh one.
   return (
     <Game
       key={`${quizId}-${runId}-${durationMs}`}

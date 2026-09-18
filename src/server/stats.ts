@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db, schema } from "./db/index.js";
 import type { Room } from "./rooms.js";
@@ -12,19 +12,22 @@ export async function recordRoomAnswers(room: Room): Promise<void> {
   const roomId = nanoid(12);
   const { state } = room;
 
-  const rows = Object.entries(state.answers).flatMap(([indexKey, byPlayer]) => {
+  const rows: (typeof schema.answers.$inferInsert)[] = [];
+  for (const [indexKey, byPlayer] of Object.entries(state.answers)) {
     const question = state.quiz.questions[Number(indexKey)];
-    if (!question) return [];
-    return Object.entries(byPlayer).map(([playerId, answer]) => ({
-      roomId,
-      playerId,
-      questionId: question.id,
-      nickname: state.players[playerId]?.nickname ?? "unknown",
-      optionIndex: answer.optionIndex,
-      correct: answer.correct,
-      responseTimeMs: answer.responseTimeMs,
-    }));
-  });
+    if (!question) continue;
+    for (const [playerId, answer] of Object.entries(byPlayer)) {
+      rows.push({
+        roomId,
+        playerId,
+        questionId: question.id,
+        nickname: state.players[playerId]?.nickname ?? "unknown",
+        optionIndex: answer.optionIndex,
+        correct: answer.correct,
+        responseTimeMs: answer.responseTimeMs,
+      });
+    }
+  }
 
   // One transaction: a room row with no answers would quietly skew every
   // later query that joins them.
@@ -92,53 +95,4 @@ export async function quizAccuracy(quizId: string): Promise<QuizAccuracyRow[]> {
       accuracy: answerCount === 0 ? 0 : correctCount / answerCount,
     };
   });
-}
-
-export interface RankingRow {
-  nickname: string;
-  score: number;
-  totalResponseTimeMs: number;
-  rank: number;
-}
-
-/**
- * Final placement for one room, with the tiebreak implemented in SQL:
- * score desc, then total response time asc.
- */
-export async function roomRankings(roomId: string): Promise<RankingRow[]> {
-  const result = await db.execute<{
-    nickname: string;
-    score: string;
-    total_response_time: string;
-    rank: string;
-  }>(sql`
-    SELECT nickname,
-           COUNT(*) FILTER (WHERE correct) AS score,
-           SUM(response_time_ms) AS total_response_time,
-           RANK() OVER (
-             ORDER BY COUNT(*) FILTER (WHERE correct) DESC,
-                      SUM(response_time_ms) ASC
-           ) AS rank
-    FROM answers
-    WHERE room_id = ${roomId}
-    GROUP BY player_id, nickname
-    ORDER BY rank
-  `);
-
-  return result.rows.map((row) => ({
-    nickname: row.nickname,
-    score: Number(row.score),
-    totalResponseTimeMs: Number(row.total_response_time),
-    rank: Number(row.rank),
-  }));
-}
-
-/** Most recent rooms for a quiz — the entry point for a stats screen. */
-export async function recentRooms(quizId: string, limit = 10) {
-  return db
-    .select()
-    .from(schema.rooms)
-    .where(eq(schema.rooms.quizId, quizId))
-    .orderBy(desc(schema.rooms.endedAt))
-    .limit(limit);
 }

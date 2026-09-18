@@ -1,13 +1,10 @@
-import { Router, type NextFunction, type Request, type Response } from "express";
+import { Router, type Request, type Response } from "express";
 import multer from "multer";
-import { tmpdir } from "node:os";
 import { z } from "zod";
 import { generateQuiz } from "../generator/index.js";
 import { quizSchema } from "../shared/quiz.js";
-import { checkGenerationAllowed, recordGeneration } from "./generationLimit.js";
-import { createJob, getJob } from "./jobs.js";
-import { runPdfJob } from "./pdfPipeline.js";
-import { callerKey, checkLimit } from "./rateLimit.js";
+import { callerKey, checkGenerationAllowed, checkLimit, recordGeneration } from "./limits.js";
+import { createJob, getJob, runPdfJob } from "./pdf.js";
 import { findQuiz, saveQuiz } from "./quizStore.js";
 
 export const api = Router();
@@ -16,45 +13,26 @@ const MAX_SOURCE_CHARS = 15_000;
 const HOUR_MS = 60 * 60 * 1000;
 
 /**
- * `dest` streams the upload to a temp file instead of holding it in memory.
- * The pipeline unlinks it in a `finally`.
- *
- * The size cap is enforced here as well as in the RAG service: rejecting at the
- * edge means an oversized file is never written to disk at all.
+ * The upload is held in memory and handed straight to the RAG service. The
+ * size cap is enforced here as well as in the RAG service, so an oversized
+ * file is rejected at the edge. The client checks it too, before uploading.
  */
 const upload = multer({
-  dest: tmpdir(),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
 });
-
-/**
- * multer throws on an oversized file, and an unhandled throw here reaches the
- * app's last-resort handler as a bare 500 — so the client shows "something went
- * wrong" for the one failure it has specific copy for. Translate it in place.
- */
-function uploadOne(req: Request, res: Response, next: NextFunction): void {
-  upload.single("file")(req, res, (error: unknown) => {
-    if (error instanceof multer.MulterError) {
-      const tooBig = error.code === "LIMIT_FILE_SIZE";
-      res.status(tooBig ? 413 : 400).json({
-        error: tooBig ? "file_too_large" : "bad_request",
-        message: tooBig
-          ? "That file is too large — the limit is 10MB."
-          : "That upload could not be read.",
-      });
-      return;
-    }
-    if (error) {
-      next(error);
-      return;
-    }
-    next();
-  });
-}
 
 /** Generation costs an LLM call; saving costs database rows. Both are finite. */
 const GENERATE_PER_HOUR = 5;
 const SAVE_PER_HOUR = 20;
+
+function retryMessage(limit: number, retryAfterSeconds: number): string {
+  if (retryAfterSeconds > 60) {
+    const minutes = Math.ceil(retryAfterSeconds / 60);
+    return `That's ${limit} in an hour — give it ${minutes} minutes and try again.`;
+  }
+  return `That's ${limit} in an hour — give it a moment and try again.`;
+}
 
 function overLimit(
   req: Request,
@@ -66,7 +44,21 @@ function overLimit(
   if (result.allowed) return false;
   res.status(429).json({
     error: "rate_limited",
-    message: `That's ${limit} in an hour — give it ${result.retryAfterSeconds > 60 ? `${Math.ceil(result.retryAfterSeconds / 60)} minutes` : "a moment"} and try again.`,
+    message: retryMessage(limit, result.retryAfterSeconds),
+  });
+  return true;
+}
+
+/** Daily counter and kill switch. Returns true (and responds) when blocked. */
+function generationBlocked(res: Response): boolean {
+  const limit = checkGenerationAllowed();
+  if (limit.allowed) return false;
+  res.status(503).json({
+    error: limit.reason,
+    message:
+      limit.reason === "disabled"
+        ? "Generation is switched off right now."
+        : "Today's generation limit is used up. Try again tomorrow, or enter questions manually.",
   });
   return true;
 }
@@ -81,8 +73,7 @@ const generateBody = z.object({
  * nothing is written until the user posts the reviewed quiz.
  *
  * The request is held open with a spinner on the client — text generation runs
- * 5-15s, inside any proxy limit. The job/ticket system waits for P5, where
- * 60-second PDFs actually need it.
+ * 5-15s, inside any proxy limit. PDFs take longer and use the job route below.
  */
 api.post("/generate", async (req: Request, res: Response) => {
   if (overLimit(req, res, "generate", GENERATE_PER_HOUR)) return;
@@ -93,18 +84,7 @@ api.post("/generate", async (req: Request, res: Response) => {
     return;
   }
 
-  const limit = checkGenerationAllowed();
-  if (!limit.allowed) {
-    res.status(503).json({
-      error: limit.reason,
-      message:
-        limit.reason === "disabled"
-          ? "Generation is switched off right now."
-          : "Today's generation limit is used up. Try again tomorrow, or enter questions manually.",
-    });
-    return;
-  }
-
+  if (generationBlocked(res)) return;
   recordGeneration();
 
   try {
@@ -131,13 +111,11 @@ const VALID_COUNTS = new Set([5, 10, 15, 20]);
  *
  * A PDF runs 10-60 seconds — reading it in the RAG service, then generation —
  * which is longer than a held-open request reliably survives behind a proxy.
- * This is the job system P3 deferred.
  *
  * Counts against the same daily counter and kill switch as text generation. No
- * separate rate-limit bucket: the daily counter is already the fuse, and a
- * second one guards against an attacker who doesn't exist at this scale.
+ * separate rate-limit bucket: the daily counter is already the fuse.
  */
-api.post("/pdf", uploadOne, (req: Request, res: Response) => {
+api.post("/pdf", upload.single("file"), (req: Request, res: Response) => {
   if (overLimit(req, res, "generate", GENERATE_PER_HOUR)) return;
 
   if (!req.file) {
@@ -149,31 +127,18 @@ api.post("/pdf", uploadOne, (req: Request, res: Response) => {
   const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.slice(0, 200) : "";
 
   if (!VALID_COUNTS.has(count)) {
-    void unlinkQuietly(req.file.path);
     res.status(400).json({ error: "bad_request", message: "Invalid question count." });
     return;
   }
 
-  const limit = checkGenerationAllowed();
-  if (!limit.allowed) {
-    void unlinkQuietly(req.file.path);
-    res.status(503).json({
-      error: limit.reason,
-      message:
-        limit.reason === "disabled"
-          ? "Generation is switched off right now."
-          : "Today's generation limit is used up. Try again tomorrow, or enter questions manually.",
-    });
-    return;
-  }
-
+  if (generationBlocked(res)) return;
   recordGeneration();
   const jobId = createJob();
 
   // Deliberately not awaited — the response goes back now and the client polls.
   // runPdfJob owns its own errors and always writes a terminal state, so this
   // floating promise cannot reject and take the process down.
-  void runPdfJob(jobId, req.file.path, prompt.trim() || null, count, req.file.originalname);
+  void runPdfJob(jobId, req.file.buffer, prompt.trim() || null, count, req.file.originalname);
 
   res.status(202).json({ jobId });
 });
@@ -193,11 +158,6 @@ api.get("/pdf/:jobId", (req: Request, res: Response) => {
     error: job.error ?? null,
   });
 });
-
-async function unlinkQuietly(path: string): Promise<void> {
-  const { unlink } = await import("node:fs/promises");
-  await unlink(path).catch(() => {});
-}
 
 /** The reviewed quiz. Server assigns the id, so the client can't pick one. */
 const saveBody = quizSchema.omit({ id: true, createdAt: true, schemaVersion: true });

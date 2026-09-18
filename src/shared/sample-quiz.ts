@@ -3,12 +3,11 @@ import type { Quiz } from "./quiz.js";
 /**
  * The permanent sample quiz that ships with the site.
  *
- * P2 plays it as its local fixture; P3 seeds it, so a visitor can play
- * instantly and the demo survives a dry LLM key. Hand-written, hence
- * origin "manual" throughout.
+ * `seed.ts` inserts it, so a visitor can play instantly and the demo survives
+ * a dry LLM key. Hand-written, hence origin "manual" throughout.
  *
  * Correct answers are spread across all four positions on purpose — generated
- * quizzes get a Fisher-Yates shuffle in P1, but this one is written by hand.
+ * quizzes get a Fisher-Yates shuffle, but this one is written by hand.
  */
 export const sampleQuiz: Quiz = {
   schemaVersion: 1,

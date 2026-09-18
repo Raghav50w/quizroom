@@ -129,25 +129,35 @@ def read_order(blocks: list[Block], page_width: float) -> tuple[list[Block], lis
     midpoint = page_width / 2
     full_width_limit = page_width * FULL_WIDTH
 
-    separators = sorted(
-        (b for b in blocks if (b.x1 - b.x0) >= full_width_limit), key=lambda b: b.y0
-    )
-    columns = [b for b in blocks if (b.x1 - b.x0) < full_width_limit]
+    # Split the page's blocks into full-width separators and column blocks.
+    separators: list[Block] = []
+    columns: list[Block] = []
+    for block in blocks:
+        if (block.x1 - block.x0) >= full_width_limit:
+            separators.append(block)
+        else:
+            columns.append(block)
+    separators.sort(key=lambda b: b.y0)
+
+    # Each separator's top edge ends a band; a final infinite boundary closes
+    # the last band.
+    boundaries = [s.y0 for s in separators] + [float("inf")]
 
     body: list[Block] = []
     captions: list[Block] = []
     previous_y = float("-inf")
-    for boundary in [*(s.y0 for s in separators), float("inf")]:
+    for boundary in boundaries:
         band = [b for b in columns if previous_y <= b.y0 < boundary]
-        left = sorted((b for b in band if b.x0 < midpoint), key=lambda b: b.y0)
-        right = sorted((b for b in band if b.x0 >= midpoint), key=lambda b: b.y0)
+        left = sorted([b for b in band if b.x0 < midpoint], key=lambda b: b.y0)
+        right = sorted([b for b in band if b.x0 >= midpoint], key=lambda b: b.y0)
         body.extend(left + right)
 
-        separator = next((s for s in separators if s.y0 == boundary), None)
-        if separator is not None:
-            # A full-width block is a caption or a wide table. Either way it is
-            # not part of the sentence it interrupts.
-            captions.append(separator)
+        # A full-width block is a caption or a wide table. Either way it is
+        # not part of the sentence it interrupts.
+        for separator in separators:
+            if separator.y0 == boundary:
+                captions.append(separator)
+                break
         previous_y = boundary
 
     # A caption can also sit in a single column, narrow enough to miss the

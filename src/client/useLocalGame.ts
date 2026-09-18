@@ -11,8 +11,8 @@ import type { Quiz } from "../shared/quiz.js";
  * The local driver: the only thing standing between the pure reducer and the
  * screen. It owns the clock and nothing else.
  *
- * P4 replaces this file with a socket driver that emits the same events and
- * renders the same state. The rules never move out of shared/game.ts.
+ * Multiplayer uses a socket driver (useRoom.ts) that emits the same events
+ * and renders the same state. The rules never move out of shared/game.ts.
  */
 
 export const SOLO_PLAYER_ID = "you";

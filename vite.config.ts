@@ -2,8 +2,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// P2 is client-only. P3 adds a proxy to Express; in production Express serves
-// this build, so there is one port, one deploy, and no CORS.
+// In dev, Vite proxies to Express; in production Express serves this build,
+// so there is one port, one deploy, and no CORS.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   root: "src/client",

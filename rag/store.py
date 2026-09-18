@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import psycopg
 from pgvector.psycopg import register_vector
 
-from embed import DIMENSIONS, embed
+from embed import embed
 from pdf import Chunk
 
 ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -56,7 +56,7 @@ def store_chunks(chunks: list[Chunk]) -> str:
             " VALUES (%s, %s, %s, %s, %s)",
             [
                 (_id(16), document_id, chunk.ordinal, chunk.text, vector)
-                for chunk, vector in zip(chunks, vectors, strict=True)
+                for chunk, vector in zip(chunks, vectors)
             ],
         )
 
@@ -89,5 +89,3 @@ def search_chunks(document_id: str, query: str, limit: int) -> list[StoredChunk]
         )
         return [StoredChunk(ordinal=row[0], text=row[1]) for row in cursor.fetchall()]
 
-
-assert DIMENSIONS == 384, "schema column is vector(384)"

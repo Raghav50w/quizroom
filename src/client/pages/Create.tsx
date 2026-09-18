@@ -1,13 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Question, Quiz } from "../../shared/quiz.js";
-import {
-  ApiError,
-  fetchPdfJob,
-  generateQuiz,
-  ping,
-  uploadPdf,
-  type PdfStep,
-} from "../lib/api.js";
+import { fetchPdfJob, generateQuiz, ping, uploadPdf, type PdfStep } from "../lib/api.js";
 import { loadDraft } from "../lib/draft.js";
 import { navigate } from "../lib/router.js";
 import { Review } from "./Review.js";
@@ -18,7 +11,7 @@ const MAX_SOURCE_CHARS = 15_000;
 type Stage =
   | { name: "input" }
   | { name: "generating" }
-  | { name: "uploading"; jobId: string; step: PdfStep }
+  | { name: "uploading"; step: PdfStep }
   | { name: "review"; questions: Question[]; title: string; sourceMode: Quiz["sourceMode"] };
 
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
@@ -54,6 +47,9 @@ export function Create() {
         }
       : { name: "input" };
   });
+  // The running PDF job, if any. Kept outside `stage` so the polling effect
+  // below can depend on it alone and not restart every time the step changes.
+  const [jobId, setJobId] = useState<string | null>(null);
   const [source, setSource] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [prompt, setPrompt] = useState("");
@@ -72,8 +68,7 @@ export function Create() {
   // Polls while a PDF job runs. 1.5s is frequent enough to feel live without
   // making 40 requests for a job that takes a minute.
   useEffect(() => {
-    if (stage.name !== "uploading") return;
-    const { jobId } = stage;
+    if (jobId === null) return;
     let cancelled = false;
 
     const timer = setInterval(() => {
@@ -88,6 +83,7 @@ export function Create() {
                 `${job.shortfall.delivered} of ${job.shortfall.requested} questions passed validation. You can add more by hand.`,
               );
             }
+            setJobId(null);
             setStage({
               name: "review",
               questions: job.quiz.questions,
@@ -96,13 +92,15 @@ export function Create() {
             });
           } else if (job.step === "failed") {
             setError(PDF_ERRORS[job.error ?? ""] ?? "That PDF could not be turned into a quiz.");
+            setJobId(null);
             setStage({ name: "input" });
           } else {
-            setStage({ name: "uploading", jobId, step: job.step });
+            setStage({ name: "uploading", step: job.step });
           }
         } catch {
           if (cancelled) return;
           setError("Lost contact with the server.");
+          setJobId(null);
           setStage({ name: "input" });
         }
       })();
@@ -112,8 +110,7 @@ export function Create() {
       cancelled = true;
       clearInterval(timer);
     };
-    // Only the id matters — re-running on every step change would reset the timer.
-  }, [stage.name === "uploading" ? stage.jobId : null]);
+  }, [jobId]);
 
   async function onUpload() {
     if (!file) return;
@@ -126,10 +123,11 @@ export function Create() {
     }
 
     try {
-      const { jobId } = await uploadPdf(file, count, prompt.trim());
-      setStage({ name: "uploading", jobId, step: "reading" });
+      const { jobId: started } = await uploadPdf(file, count, prompt.trim());
+      setJobId(started);
+      setStage({ name: "uploading", step: "reading" });
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "Could not reach the server.");
+      setError((cause as Error).message);
     }
   }
 
@@ -154,7 +152,7 @@ export function Create() {
         sourceMode: "text",
       });
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "Could not reach the server.");
+      setError((cause as Error).message);
       setStage({ name: "input" });
     }
   }
@@ -176,6 +174,13 @@ export function Create() {
   }
 
   const busy = stage.name === "generating" || stage.name === "uploading";
+
+  function buttonLabel(): string {
+    if (stage.name === "uploading") return STEP_LABELS[stage.step];
+    if (busy) return "Writing questions…";
+    if (file) return "Generate from PDF";
+    return "Generate";
+  }
 
   return (
     <div className="mx-auto w-full max-w-2xl p-6">
@@ -267,13 +272,7 @@ export function Create() {
         onClick={() => void (file ? onUpload() : onGenerate())}
         className="mt-8 w-full rounded-2xl bg-indigo-600 py-5 text-xl font-bold text-white transition hover:bg-indigo-700 active:scale-[0.99] disabled:opacity-40"
       >
-        {stage.name === "uploading"
-          ? STEP_LABELS[stage.step]
-          : busy
-            ? "Writing questions…"
-            : file
-              ? "Generate from PDF"
-              : "Generate"}
+        {buttonLabel()}
       </button>
       {busy && (
         <p className="mt-3 text-center text-sm text-slate-500">

@@ -78,12 +78,3 @@ export async function findQuiz(id: string): Promise<Quiz | null> {
     })),
   });
 }
-
-export async function quizExists(id: string): Promise<boolean> {
-  const [row] = await db
-    .select({ id: schema.quizzes.id })
-    .from(schema.quizzes)
-    .where(eq(schema.quizzes.id, id))
-    .limit(1);
-  return row !== undefined;
-}

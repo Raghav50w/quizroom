@@ -1,14 +1,13 @@
 import { sampleQuiz } from "../src/shared/sample-quiz.js";
 import { db, schema } from "../src/server/db/index.js";
-import { quizExists } from "../src/server/quizStore.js";
-import { eq } from "drizzle-orm";
+import { findQuiz } from "../src/server/quizStore.js";
 
 /**
  * The permanent sample quiz. A visitor plays instantly, and the demo survives a
  * dry LLM key. Its id is fixed ("sample") so the link never changes.
  */
 async function main() {
-  if (await quizExists(sampleQuiz.id)) {
+  if (await findQuiz(sampleQuiz.id)) {
     console.log(`sample quiz already present (/q/${sampleQuiz.id})`);
     return;
   }

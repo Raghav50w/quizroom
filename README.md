@@ -28,8 +28,8 @@ src/shared/     quiz schema, game state machine, socket contract
 src/generator/  topic | notes | excerpt -> validated quiz JSON
 src/server/     Express, Socket.IO, Drizzle
 src/client/     React
-rag/            Python: PDF -> chunks -> embeddings -> retrieval
-scripts/        generate.ts (CLI), seed.ts
+rag/            Python: PDF -> chunks -> embeddings -> retrieval, plus eval.py
+scripts/        seed.ts, eval.ts
 ```
 
 ## Run it
@@ -51,7 +51,27 @@ pip install -r rag/requirements.txt
 uvicorn main:app --app-dir rag --port 8000
 ```
 
-Tests: `npm test` · `cd rag && pytest`
+Tests: `npm test`
+
+## Measured
+
+Retrieval, on a 30-page two-column IEEE paper (8.3 MB, 47 chunks), 15 hand-labelled queries — `python rag/eval.py paper.pdf`:
+
+| | Cosine search (pgvector) | Even-sample baseline |
+|---|---|---|
+| Hit rate @ 4 chunks | **15/15 (100%)** | 3/15 (20%) |
+| MRR | **0.97** | — |
+
+Generation, 8 sources (topics + pasted notes), 12 questions asked each — `npm run eval`:
+
+| | |
+|---|---|
+| Raw questions returned | 96 |
+| Rejected by the validation gate | 0 |
+| Near-duplicates removed | 0 |
+| Correct-answer position before shuffle | A 24% · B 30% · C 27% · D 19% |
+
+Live play on the sample quiz, 5 games: 5 of 10 questions scored under 30% accuracy.
 
 ## Deploy
 

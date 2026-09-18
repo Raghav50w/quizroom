@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Question, Quiz } from "../../shared/quiz.js";
 import { questionSchema, quizSchema } from "../../shared/quiz.js";
-import { ApiError, saveQuiz } from "../lib/api.js";
+import { saveQuiz } from "../lib/api.js";
 import { clearDraft, saveDraft } from "../lib/draft.js";
 import { rememberQuiz } from "../lib/myQuizzes.js";
 import { navigate } from "../lib/router.js";
@@ -75,10 +75,11 @@ export function Review({
     ]);
   }
 
-  const invalid = questions
-    .map((question, index) => ({ index, ok: questionSchema.safeParse(question).success }))
-    .filter((entry) => !entry.ok)
-    .map((entry) => entry.index);
+  // Indexes of questions that would fail the schema as they stand.
+  const invalid: number[] = [];
+  for (let index = 0; index < questions.length; index++) {
+    if (!questionSchema.safeParse(questions[index]).success) invalid.push(index);
+  }
 
   const canSave =
     title.trim().length > 0 &&
@@ -112,7 +113,7 @@ export function Review({
       clearDraft();
       navigate(`/q/${quiz.id}`);
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : "Could not reach the server.");
+      setError((cause as Error).message);
       setSaving(false);
     }
   }

@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 /**
- * The Quiz contract. Frozen in P0.
+ * The Quiz contract.
  *
- * Consumed by three things — the generator CLI, the Express server, and the
+ * Consumed by three things — the generator, the Express server, and the
  * React client — so it lives here and imports nothing Node-only (Vite bundles
  * this folder to the browser).
  *

@@ -98,9 +98,5 @@ export function useRoom(code: string) {
     });
   }
 
-  function requestStats() {
-    socketRef.current?.emit(CLIENT_EVENTS.requestStats, { code });
-  }
-
-  return { snapshot, stats, error, msLeft, start, answer, requestStats };
+  return { snapshot, stats, error, msLeft, start, answer };
 }

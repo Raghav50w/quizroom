@@ -4,10 +4,10 @@ import type { Quiz } from "./quiz.js";
  * The game as a pure function: (state, event) => state. No I/O, no timers, no
  * sockets, no randomness.
  *
- * P2 drives this from a local React hook; P4 drives the identical reducer from
- * the server with a socket driver. That is the whole point — the riskiest logic
- * in the project is exercised from P2 onward, and P4 swaps the driver rather
- * than rewriting the rules.
+ * Solo mode drives this from a local React hook; multiplayer drives the
+ * identical reducer from the server with a socket driver. That is the whole
+ * point — the riskiest logic in the project has one implementation, and the
+ * two modes only swap the driver.
  *
  * Browser-safe: lives in shared/, imports nothing Node-only.
  */

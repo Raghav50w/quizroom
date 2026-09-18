@@ -9,7 +9,7 @@ import { attachSockets } from "./socket.js";
 
 /**
  * One process in production: Express serves the React build, the API, and
- * (from P4) the WebSocket. One port, one deploy, no CORS.
+ * the WebSocket. One port, one deploy, no CORS.
  *
  * In dev, Vite runs separately and proxies /api here.
  */

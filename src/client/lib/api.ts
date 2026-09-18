@@ -1,33 +1,26 @@
 import type { Quiz } from "../../shared/quiz.js";
 
-/** Server-shaped errors, so screens can show the message the server chose. */
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly code: string,
-    readonly status: number,
-  ) {
-    super(message);
-  }
+/**
+ * Every error thrown from here carries a message the screen can show as is:
+ * the server's own copy when it answered, or a fixed line when it didn't.
+ */
+async function throwFromResponse(response: Response): Promise<never> {
+  const body = (await response.json().catch(() => ({}))) as { message?: string };
+  throw new Error(body.message ?? "Something went wrong.");
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
-
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as {
-      error?: string;
-      message?: string;
-    };
-    throw new ApiError(
-      body.message ?? "Something went wrong.",
-      body.error ?? "unknown",
-      response.status,
-    );
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}`, {
+      headers: { "Content-Type": "application/json" },
+      ...init,
+    });
+  } catch {
+    throw new Error("Could not reach the server.");
   }
+
+  if (!response.ok) await throwFromResponse(response);
 
   return (await response.json()) as T;
 }
@@ -78,19 +71,14 @@ export async function uploadPdf(
   form.append("count", String(count));
   form.append("prompt", prompt);
 
-  const response = await fetch("/api/pdf", { method: "POST", body: form });
-
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as {
-      error?: string;
-      message?: string;
-    };
-    throw new ApiError(
-      body.message ?? "Something went wrong.",
-      body.error ?? "unknown",
-      response.status,
-    );
+  let response: Response;
+  try {
+    response = await fetch("/api/pdf", { method: "POST", body: form });
+  } catch {
+    throw new Error("Could not reach the server.");
   }
+
+  if (!response.ok) await throwFromResponse(response);
 
   return (await response.json()) as { jobId: string };
 }

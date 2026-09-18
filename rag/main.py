@@ -11,10 +11,44 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from pdf import PdfError, pdf_to_chunks
-from selection import CHUNKS_PER_PROMPT, even_sample, join
-from store import list_chunks, search_chunks, store_chunks
+from store import StoredChunk, list_chunks, search_chunks, store_chunks
 
 app = FastAPI(title="quizroom-rag")
+
+# Four chunks, ~12,000 characters. Five would be exactly the 15,000-character
+# source cap the generator enforces, with zero headroom — sitting precisely on
+# a boundary is how a confusing failure arrives later.
+CHUNKS_PER_PROMPT = 4
+
+
+def even_sample(items: list[StoredChunk], count: int) -> list[StoredChunk]:
+    """`count` items spread evenly across `items`, keeping input order.
+
+    This is the no-topic path, and it is honestly *not* vector search — it is
+    index arithmetic that never touches pgvector. With no topic there is
+    nothing to search against, so we spread the picks across the document
+    rather than taking the first N. That covers the document's shape, not its
+    meaning, which is why the upload form asks for a topic by default.
+    """
+    if count <= 0:
+        return []
+    if len(items) <= count:
+        return list(items)
+
+    step = len(items) / count
+    # Mid-interval, not `i * step`: taking the left edge of each interval
+    # always picks index 0 and never comes near the end of the document.
+    return [items[int((i + 0.5) * step)] for i in range(count)]
+
+
+def join(items: list[StoredChunk]) -> str:
+    """Document order, whatever order retrieval returned them in.
+
+    Cosine search returns by similarity, so without this the model reads
+    excerpts shuffled — a conclusion before the setup that explains it.
+    """
+    ordered = sorted(items, key=lambda item: item.ordinal)
+    return "\n\n".join(item.text for item in ordered)
 
 
 class SelectRequest(BaseModel):

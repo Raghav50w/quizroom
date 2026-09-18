@@ -6,7 +6,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "generate": "tsx scripts/generate.ts",
+    "eval": "tsx scripts/eval.ts",
     "dev": "vite",
     "dev:server": "tsx watch src/server/index.ts",
     "build": "vite build",

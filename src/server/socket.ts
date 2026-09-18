@@ -1,12 +1,11 @@
 import type { Server as HttpServer } from "node:http";
 import { Server, type Socket } from "socket.io";
-import { z } from "zod";
+import type { z } from "zod";
 import {
   CLIENT_EVENTS,
   SERVER_EVENTS,
   createRoomSchema,
   joinRoomSchema,
-  roomCodeSchema,
   startGameSchema,
   submitAnswerSchema,
   type ErrorCode,
@@ -26,11 +25,11 @@ import {
   type Room,
 } from "./rooms.js";
 import { findQuiz } from "./quizStore.js";
-import { recordRoomAnswers } from "./statsStore.js";
+import { recordRoomAnswers } from "./stats.js";
 
 /**
  * The socket driver. It owns transport and nothing else — every rule lives in
- * the pure reducer, the same one P2 drives from a React hook.
+ * the pure reducer, the same one the solo mode drives from a React hook.
  */
 
 interface SocketData {
@@ -46,27 +45,11 @@ export function attachSockets(httpServer: HttpServer): Server {
   });
 
   io.on("connection", (socket: Socket) => {
-    socket.on(CLIENT_EVENTS.createRoom, (raw: unknown) => {
-      void handleCreate(io, socket, raw);
-    });
-    socket.on(CLIENT_EVENTS.joinRoom, (raw: unknown) => {
-      handleJoin(io, socket, raw);
-    });
-    socket.on(CLIENT_EVENTS.startGame, (raw: unknown) => {
-      handleStart(io, socket, raw);
-    });
-    socket.on(CLIENT_EVENTS.submitAnswer, (raw: unknown) => {
-      handleAnswer(io, socket, raw);
-    });
-    socket.on(CLIENT_EVENTS.requestStats, (raw: unknown) => {
-      const payload = parse(z.object({ code: roomCodeSchema }), raw, socket);
-      if (!payload) return;
-      const room = getRoom(payload.code);
-      if (room) socket.emit(SERVER_EVENTS.stats, computeStats(room));
-    });
-    socket.on("disconnect", () => {
-      handleDisconnect(io, socket);
-    });
+    socket.on(CLIENT_EVENTS.createRoom, (raw: unknown) => handleCreate(io, socket, raw));
+    socket.on(CLIENT_EVENTS.joinRoom, (raw: unknown) => handleJoin(io, socket, raw));
+    socket.on(CLIENT_EVENTS.startGame, (raw: unknown) => handleStart(io, socket, raw));
+    socket.on(CLIENT_EVENTS.submitAnswer, (raw: unknown) => handleAnswer(io, socket, raw));
+    socket.on("disconnect", () => handleDisconnect(io, socket));
   });
 
   return io;
@@ -246,15 +229,13 @@ export function computeStats(room: Room): GameStats {
 
   // Everyone wrong on everything ties across all questions; first wins, and
   // hardest/easiest can legitimately be the same question.
-  const answered = questions.filter((question) => question.answerCount > 0);
-  const hardest =
-    answered.length === 0
-      ? null
-      : answered.reduce((worst, q) => (q.accuracy < worst.accuracy ? q : worst));
-  const easiest =
-    answered.length === 0
-      ? null
-      : answered.reduce((best, q) => (q.accuracy > best.accuracy ? q : best));
+  let hardest: QuestionStat | null = null;
+  let easiest: QuestionStat | null = null;
+  for (const question of questions) {
+    if (question.answerCount === 0) continue;
+    if (hardest === null || question.accuracy < hardest.accuracy) hardest = question;
+    if (easiest === null || question.accuracy > easiest.accuracy) easiest = question;
+  }
 
   return { questions, hardest, easiest };
 }
