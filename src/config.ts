@@ -22,6 +22,12 @@ const envSchema = z.object({
   // In production Node and the Python service share one container, so the
   // default is where uvicorn listens.
   RAG_SERVICE_URL: z.string().url().default("http://127.0.0.1:8000"),
+  // Only scripts/eval.ts reads these: the groundedness judge should ideally be
+  // a different model from the generator, and a spare key keeps the eval off
+  // the app's quota. Both fall back to the LLM_* values.
+  // Blank counts as unset, so `JUDGE_API_KEY=` can sit in .env until filled.
+  JUDGE_MODEL: z.string().transform((v) => v || undefined).optional(),
+  JUDGE_API_KEY: z.string().transform((v) => v || undefined).optional(),
   GENERATION_ENABLED: z
     .enum(["true", "false"])
     .default("true")

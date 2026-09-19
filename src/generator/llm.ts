@@ -19,8 +19,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function callLLM(prompt: string): Promise<string> {
+/** Overrides exist for the eval judge only; the app always uses the config values. */
+export interface LLMOverrides {
+  model?: string;
+  apiKey?: string;
+}
+
+export async function callLLM(prompt: string, overrides: LLMOverrides = {}): Promise<string> {
   const url = new URL("chat/completions", ensureTrailingSlash(config.LLM_BASE_URL));
+  const model = overrides.model ?? config.LLM_MODEL;
+  const apiKey = overrides.apiKey ?? config.LLM_API_KEY;
 
   for (let attempt = 0; attempt < 2; attempt++) {
     const isLastAttempt = attempt === 1;
@@ -31,10 +39,10 @@ export async function callLLM(prompt: string): Promise<string> {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${config.LLM_API_KEY}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: config.LLM_MODEL,
+          model,
           temperature: 0.7,
           // One message. The rules, the source, and the user's request are a
           // single prompt — there is no system/user split anywhere here.

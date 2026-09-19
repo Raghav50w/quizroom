@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import secrets
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import psycopg
@@ -37,6 +39,22 @@ def _connect() -> psycopg.Connection:
     return connection
 
 
+# The service opens a connection per call: two calls per upload, and a
+# connection held open across a 60s LLM wait is a Neon slot wasted. eval.py
+# runs hundreds of calls back to back and sets this so they share one.
+shared: psycopg.Connection | None = None
+
+
+@contextmanager
+def _session() -> Iterator[psycopg.Connection]:
+    if shared is not None:
+        yield shared
+        shared.commit()
+        return
+    with _connect() as connection:
+        yield connection
+
+
 def store_chunks(chunks: list[Chunk]) -> str:
     """Embeds and stores a document's chunks, returning its id.
 
@@ -50,7 +68,7 @@ def store_chunks(chunks: list[Chunk]) -> str:
     document_id = _id(12)
     vectors = embed([chunk.text for chunk in chunks])
 
-    with _connect() as connection, connection.cursor() as cursor:
+    with _session() as connection, connection.cursor() as cursor:
         cursor.executemany(
             "INSERT INTO chunks (id, document_id, ordinal, text, embedding)"
             " VALUES (%s, %s, %s, %s, %s)",
@@ -64,7 +82,7 @@ def store_chunks(chunks: list[Chunk]) -> str:
 
 
 def list_chunks(document_id: str) -> list[StoredChunk]:
-    with _connect() as connection, connection.cursor() as cursor:
+    with _session() as connection, connection.cursor() as cursor:
         cursor.execute(
             "SELECT ordinal, text FROM chunks WHERE document_id = %s ORDER BY ordinal",
             (document_id,),
@@ -81,7 +99,7 @@ def search_chunks(document_id: str, query: str, limit: int) -> list[StoredChunk]
     sequential scan.
     """
     [vector] = embed([query])
-    with _connect() as connection, connection.cursor() as cursor:
+    with _session() as connection, connection.cursor() as cursor:
         cursor.execute(
             "SELECT ordinal, text FROM chunks WHERE document_id = %s"
             " ORDER BY embedding <=> %s::vector LIMIT %s",
@@ -89,3 +107,8 @@ def search_chunks(document_id: str, query: str, limit: int) -> list[StoredChunk]
         )
         return [StoredChunk(ordinal=row[0], text=row[1]) for row in cursor.fetchall()]
 
+
+def delete_document(document_id: str) -> None:
+    """Used by eval.py to remove what it stored. The service never deletes."""
+    with _session() as connection, connection.cursor() as cursor:
+        cursor.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))

@@ -1,19 +1,29 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import { config } from "../src/config.js";
+import { generateQuiz } from "../src/generator/index.js";
 import { callLLM } from "../src/generator/llm.js";
 import { buildPrompt } from "../src/generator/prompt.js";
 import { dedupe, extractJson, rawResponseSchema, runGate } from "../src/generator/validate.js";
 import { ingestPdf, selectSource } from "../src/server/pdf.js";
+import type { Question } from "../src/shared/quiz.js";
 import { quizAccuracy } from "../src/server/stats.js";
 
 /**
  * Measures the generation pipeline so the README can quote real numbers.
  *
  *   npm run eval
- *   npm run eval -- --pdf notes.pdf --about "cell division"
+ *   npm run eval -- --pdf notes.pdf --about "cell division" [--pdf other.pdf ...]
  *
  * Needs .env. The PDF part needs the Python service running:
  *   uvicorn main:app --app-dir rag --port 8000
+ *
+ * The PDF part is the one that judges output quality rather than shape: a
+ * quiz is generated from the retrieved excerpt exactly as the app does it,
+ * then a second model is asked, per question, whether the excerpt supports
+ * the marked answer and whether the stem is answerable from the excerpt at
+ * all. Set JUDGE_MODEL (and optionally JUDGE_API_KEY) in .env so the judge is
+ * not the generator grading itself.
  *
  * Prints one markdown table per section. Nothing is saved.
  */
@@ -157,23 +167,145 @@ async function evalGeneration(): Promise<void> {
   }
 }
 
-async function evalPdf(pdfPath: string, about: string): Promise<void> {
-  process.stderr.write(`pdf: ${pdfPath} (about "${about}")\n`);
+// ---------------------------------------------------------------------------
+// PDF: retrieval + generation, judged
+// ---------------------------------------------------------------------------
+
+interface Verdict {
+  grounded: boolean;
+  answerable: boolean;
+}
+
+/**
+ * One question, one call. Two yes/no judgements rather than a score: a 1-5
+ * rating from a model is noise dressed as precision, and a binary is easy to
+ * spot-check by hand against the printed stems.
+ */
+function judgePrompt(excerpt: string, question: Question): string {
+  const options = question.options.map((o, i) => `${"ABCD"[i]}. ${o}`).join("\n");
+  return `You are checking a multiple-choice question against the source text it was written from.
+
+SOURCE, between the --- lines:
+---
+${excerpt}
+---
+
+QUESTION: ${question.stem}
+${options}
+MARKED CORRECT: ${"ABCD"[question.correctIndex]}
+
+Answer two things, strictly from the source:
+- grounded: does the source state or directly imply that the marked option is correct?
+- answerable: could a reader answer this question using only the source, with no outside knowledge?
+
+Respond with JSON only: {"grounded": true|false, "answerable": true|false}`;
+}
+
+/**
+ * Free-tier keys allow about 5 requests a minute. One call every 13s stays
+ * under that; a 429 anyway means the bucket was already partly spent, so wait
+ * a full minute once before giving up on the question.
+ */
+const CALL_INTERVAL_MS = 13_000;
+const RATE_LIMIT_WAIT_MS = 60_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function paced<T>(call: () => Promise<T>): Promise<T> {
+  await sleep(CALL_INTERVAL_MS);
+  try {
+    return await call();
+  } catch (error) {
+    if (!(error as Error).message.includes("429")) throw error;
+    await sleep(RATE_LIMIT_WAIT_MS);
+    return call();
+  }
+}
+
+async function judge(excerpt: string, question: Question): Promise<Verdict> {
+  const completion = await paced(() =>
+    callLLM(judgePrompt(excerpt, question), {
+      model: config.JUDGE_MODEL,
+      apiKey: config.JUDGE_API_KEY,
+    }),
+  );
+  const parsed = extractJson(completion) as Partial<Verdict>;
+  return { grounded: parsed.grounded === true, answerable: parsed.answerable === true };
+}
+
+interface PdfResult {
+  label: string;
+  chunks: number;
+  questions: number;
+  grounded: number;
+  answerable: number;
+  ungrounded: string[];
+}
+
+async function evalPdf(pdfPath: string, about: string): Promise<PdfResult> {
+  const label = about ? `${basename(pdfPath)} ("${about}")` : basename(pdfPath);
+  process.stderr.write(`pdf: ${label}\n`);
+
   const file = await readFile(pdfPath);
   const { documentId, chunks } = await ingestPdf(file, basename(pdfPath));
+  const excerpt = await selectSource(documentId, about || null);
 
-  const withTopic = await selectSource(documentId, about);
-  const withoutTopic = await selectSource(documentId, null);
+  const { quiz } = await paced(() =>
+    generateQuiz({
+      source: excerpt,
+      count: COUNT,
+      sourceMode: "pdf",
+      title: about || basename(pdfPath),
+      prompt: about || undefined,
+    }),
+  );
 
-  const term = about.toLowerCase();
-  const hitWithTopic = withTopic.toLowerCase().includes(term);
-  const hitWithout = withoutTopic.toLowerCase().includes(term);
+  const result: PdfResult = { label, chunks, questions: 0, grounded: 0, answerable: 0, ungrounded: [] };
+  for (const question of quiz.questions) {
+    const verdict = await judge(excerpt, question);
+    result.questions++;
+    if (verdict.grounded) result.grounded++;
+    else result.ungrounded.push(question.stem);
+    if (verdict.answerable) result.answerable++;
+  }
+  return result;
+}
 
-  console.log(`\n## PDF: ${basename(pdfPath)}\n`);
-  console.log(`- Chunks stored: ${chunks}`);
-  console.log(`- Topic "${about}" appears in topic-search excerpt: ${hitWithTopic ? "yes" : "no"}`);
-  console.log(`- Topic "${about}" appears in even-sample excerpt: ${hitWithout ? "yes" : "no"}`);
-  console.log(`- Excerpt length (chars): ${withTopic.length} with topic, ${withoutTopic.length} without`);
+async function evalPdfs(pdfs: Array<{ path: string; about: string }>): Promise<void> {
+  const results: PdfResult[] = [];
+  for (const pdf of pdfs) {
+    try {
+      results.push(await evalPdf(pdf.path, pdf.about));
+    } catch (error) {
+      process.stderr.write(`  skipped: ${(error as Error).message.split("\n")[0]}\n`);
+    }
+  }
+  if (results.length === 0) return;
+
+  const judgeModel = config.JUDGE_MODEL ?? config.LLM_MODEL;
+  console.log(`\n## PDF quizzes (generator ${config.LLM_MODEL}, judge ${judgeModel})\n`);
+  console.log("| Source | Chunks | Questions | Grounded | Answerable |");
+  console.log("|---|---|---|---|---|");
+  let questions = 0;
+  let grounded = 0;
+  let answerable = 0;
+  for (const r of results) {
+    questions += r.questions;
+    grounded += r.grounded;
+    answerable += r.answerable;
+    console.log(
+      `| ${r.label} | ${r.chunks} | ${r.questions} | ${r.grounded} (${percent(r.grounded, r.questions)}) | ${r.answerable} (${percent(r.answerable, r.questions)}) |`,
+    );
+  }
+  console.log(`| **all** | | ${questions} | ${grounded} (${percent(grounded, questions)}) | ${answerable} (${percent(answerable, questions)}) |`);
+
+  const ungrounded = results.flatMap((r) => r.ungrounded.map((stem) => `- ${r.label}: ${stem}`));
+  if (ungrounded.length > 0) {
+    console.log("\n### Judged not grounded\n");
+    for (const line of ungrounded) console.log(line);
+  }
 }
 
 async function evalLivePlay(): Promise<void> {
@@ -209,9 +341,11 @@ async function main(): Promise<void> {
     }
   }
 
-  await evalGeneration();
-  for (const pdf of pdfs) await evalPdf(pdf.path, pdf.about);
-  await evalLivePlay();
+  // --pdf-only: just the judged PDF section, so a quota-limited key is spent on it.
+  const pdfOnly = args.includes("--pdf-only");
+  if (!pdfOnly) await evalGeneration();
+  await evalPdfs(pdfs);
+  if (!pdfOnly) await evalLivePlay();
 }
 
 main()

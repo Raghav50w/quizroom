@@ -234,8 +234,13 @@ def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) 
     return chunks
 
 
-def pdf_to_chunks(data: bytes) -> list[Chunk]:
+def pdf_to_chunks(
+    data: bytes, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP
+) -> list[Chunk]:
     """The whole pure pipeline: bytes in, chunks out.
+
+    `size` and `overlap` are only ever varied by eval.py's chunk-size sweep;
+    the service always uses the defaults.
 
     `extract_pages` runs first so that a file which is not a PDF at all fails
     as a PdfError with a code the client understands. Opening the document here
@@ -245,4 +250,4 @@ def pdf_to_chunks(data: bytes) -> list[Chunk]:
     pages = extract_pages(data)
     with pymupdf.open(stream=data, filetype="pdf") as doc:
         page_width = doc[0].rect.width if doc.page_count else 0.0
-    return chunk_text(clean(pages, page_width))
+    return chunk_text(clean(pages, page_width), size, overlap)

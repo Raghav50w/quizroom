@@ -1,49 +1,49 @@
-"""Retrieval eval: does cosine search find the right passage?
+"""Retrieval eval: does cosine search find the right passage, and does it beat
+the obvious alternatives?
 
-    python rag/eval.py path/to/document.pdf
+    python rag/eval.py pdf/              every PDF in the folder with labels
+    python rag/eval.py pdf/OS_test.pdf   one PDF
+    python rag/eval.py pdf/ --sweep      also re-run cosine search at several chunk sizes
 
-Needs DATABASE_URL in the environment (same as the service). No LLM calls.
+Needs DATABASE_URL in the environment (same as the service). No LLM calls;
+embeddings are local. Everything it stores, it deletes at the end.
 
-Each query below names a topic a user might type, paired with a phrase that
-only appears in the passage that answers it. A retrieval "hit" means the
-phrase is inside one of the top-k chunks returned. The same queries are run
-against the no-topic path (even sampling across the document) as a baseline,
-so the number reported is search *versus doing nothing*, not search in a vacuum.
+Labels live in evals/queries.py as (query, fingerprint) pairs. A chunk is
+relevant to a query if it contains the fingerprint — usually one chunk, two
+when the overlap puts the phrase on both sides of a boundary. Three methods
+are scored against the same stored chunks:
 
-Labelled for State-of-the-Art_Power_Electronics_in_AI_Data_Centers.pdf. For a
-different PDF, replace QUERIES with topic -> phrase pairs from that document.
+    cosine   pgvector nearest neighbours — what ships
+    bm25     lexical ranking over the same chunks, in memory — the standard baseline
+    even     the no-topic path: chunks spread evenly across the document, no search
+
+and reported as hit@k, MRR, nDCG@k and precision@k, the usual retrieval set.
 """
 
 from __future__ import annotations
 
+import math
 import sys
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent / "evals"))
+
+from rank_bm25 import BM25Okapi
 
 from pdf import CHUNK_OVERLAP, CHUNK_SIZE, pdf_to_chunks
-from store import StoredChunk, list_chunks, search_chunks, store_chunks
+from queries import QUERIES
+import store
+from store import StoredChunk, delete_document, list_chunks, search_chunks, store_chunks
 
 TOP_K = 4  # Same as CHUNKS_PER_PROMPT in main.py.
 
-# (what a user would type in the focus box, a phrase found only in the right passage)
-QUERIES = [
-    ("how fast is AI compute power growing", "3.4 months"),
-    ("solid-state transformers connecting to the utility grid", "solid-state transformers"),
-    ("temperature of PFC stage components under full load", "PFC HF leg"),
-    ("rack power where PSU-based distribution becomes impractical", "200 kW rack loads"),
-    ("using 650 V GaN devices on the primary side", "half of the total bus voltage"),
-    ("peak efficiency of LLC converters around 1.2 to 1.6 kW", "98.3% Pk"),
-    ("advantages of matrix transformer design", "matrix transformer"),
-    ("output voltage and current range of voltage regulator modules", "0.6-1.8 V"),
-    ("how the trans-inductor voltage regulator works", "IP-TLVR combines"),
-    ("transient recovery time of multiphase buck converters", "50 µs"),
-    ("highest reported power density at 1 MHz", "3500 W/in3"),
-    ("two-stage resonant switched-capacitor converter structure", "2:1 resonant SC front end"),
-    ("why GaN devices have low on-resistance", "two-dimensional electron gas"),
-    ("price range of SiC MOSFETs", "$5 to over $130"),
-    ("limits on scaling conventional AC power supply units", "copper usage"),
-]
+# Overlap is scaled with size so the sweep varies one thing. 3000/400 is what ships.
+SWEEP_SIZES = [1000, 2000, 3000]
+
+METHODS = ["cosine", "bm25", "even"]
 
 
 def even_sample(items: list[StoredChunk], count: int) -> list[StoredChunk]:
@@ -54,16 +54,79 @@ def even_sample(items: list[StoredChunk], count: int) -> list[StoredChunk]:
     return [items[int((i + 0.5) * step)] for i in range(count)]
 
 
-def contains(chunks: list[StoredChunk], phrase: str) -> int | None:
-    """1-based rank of the first chunk containing the phrase, or None."""
+def tokenize(text: str) -> list[str]:
+    return text.lower().split()
+
+
+def bm25_search(index: BM25Okapi, stored: list[StoredChunk], query: str, k: int) -> list[StoredChunk]:
+    scores = index.get_scores(tokenize(query))
+    order = sorted(range(len(stored)), key=lambda i: scores[i], reverse=True)
+    return [stored[i] for i in order[:k]]
+
+
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+
+
+def relevant_ordinals(stored: list[StoredChunk], phrase: str) -> set[int]:
     needle = phrase.lower()
-    for rank, chunk in enumerate(chunks, start=1):
-        if needle in chunk.text.lower():
-            return rank
-    return None
+    return {chunk.ordinal for chunk in stored if needle in chunk.text.lower()}
 
 
-def check_chunking(text_chunks) -> list[str]:
+@dataclass
+class Score:
+    rank: int | None  # 1-based rank of the first relevant chunk, or None
+    ndcg: float
+    precision: float
+
+    @property
+    def hit(self) -> bool:
+        return self.rank is not None
+
+    @property
+    def rr(self) -> float:
+        return 1 / self.rank if self.rank else 0.0
+
+
+def score(retrieved: list[StoredChunk], relevant: set[int], k: int) -> Score:
+    """Binary relevance. nDCG's ideal ranking has every relevant chunk first."""
+    gains = [1 if chunk.ordinal in relevant else 0 for chunk in retrieved[:k]]
+    rank = next((i + 1 for i, g in enumerate(gains) if g), None)
+
+    dcg = sum(g / math.log2(i + 2) for i, g in enumerate(gains))
+    ideal = sum(1 / math.log2(i + 2) for i in range(min(len(relevant), k)))
+    ndcg = dcg / ideal if ideal else 0.0
+
+    return Score(rank=rank, ndcg=ndcg, precision=sum(gains) / k)
+
+
+@dataclass
+class Totals:
+    scores: list[Score] = field(default_factory=list)
+
+    @property
+    def n(self) -> int:
+        return len(self.scores)
+
+    @property
+    def hits(self) -> int:
+        return sum(s.hit for s in self.scores)
+
+    def mean(self, attribute: str) -> float:
+        return sum(getattr(s, attribute) for s in self.scores) / self.n if self.n else 0.0
+
+    def row(self, label: str) -> str:
+        return (
+            f"| {label} | {self.hits}/{self.n} ({self.hits / self.n:.0%}) | {self.mean('rr'):.2f}"
+            f" | {self.mean('ndcg'):.2f} | {self.mean('precision'):.2f} |"
+        )
+
+
+TOTALS_HEADER = f"| Method | Hit@{TOP_K} | MRR | nDCG@{TOP_K} | P@{TOP_K} |\n|---|---|---|---|---|"
+
+
+def check_chunking(text_chunks, size: int, overlap: int) -> list[str]:
     """Structural sanity on the chunker, reported as a list of problems."""
     problems = []
     if not text_chunks:
@@ -71,63 +134,174 @@ def check_chunking(text_chunks) -> list[str]:
     for chunk in text_chunks:
         if not chunk.text.strip():
             problems.append(f"chunk {chunk.ordinal} is empty")
-        if len(chunk.text) > CHUNK_SIZE:
-            problems.append(f"chunk {chunk.ordinal} is {len(chunk.text)} chars, over {CHUNK_SIZE}")
+        if len(chunk.text) > size:
+            problems.append(f"chunk {chunk.ordinal} is {len(chunk.text)} chars, over {size}")
     for previous, current in zip(text_chunks, text_chunks[1:]):
-        if current.text[:CHUNK_OVERLAP] != previous.text[-CHUNK_OVERLAP:]:
-            problems.append(f"chunks {previous.ordinal}->{current.ordinal} do not overlap by {CHUNK_OVERLAP}")
+        if current.text[:overlap] != previous.text[-overlap:]:
+            problems.append(f"chunks {previous.ordinal}->{current.ordinal} do not overlap by {overlap}")
     return problems
 
 
-def main(pdf_path: str) -> None:
-    data = Path(pdf_path).read_bytes()
-    chunks = pdf_to_chunks(data)
-    print(f"## Chunking: {Path(pdf_path).name}\n")
-    print(f"- {len(data) / 1024 / 1024:.1f} MB -> {len(chunks)} chunks of {CHUNK_SIZE} chars, {CHUNK_OVERLAP} overlap")
-    problems = check_chunking(chunks)
-    print(f"- Structural problems: {len(problems)}")
-    for problem in problems:
-        print(f"  - {problem}")
+# ---------------------------------------------------------------------------
+# One document
+# ---------------------------------------------------------------------------
 
+
+@dataclass
+class DocumentResult:
+    chunks: int
+    ingest_seconds: float
+    totals: dict[str, Totals]
+    search_seconds: list[float]
+
+
+def evaluate_document(path: Path, queries: list[tuple[str, str]], stored_ids: list[str]) -> DocumentResult:
+    data = path.read_bytes()
+    chunks = pdf_to_chunks(data)
+
+    started = time.perf_counter()
     document_id = store_chunks(chunks)
+    ingest_seconds = time.perf_counter() - started
+    stored_ids.append(document_id)
+
     stored = list_chunks(document_id)
+    bm25 = BM25Okapi([tokenize(chunk.text) for chunk in stored])
     baseline = even_sample(stored, TOP_K)
 
     # Every label must exist somewhere in the document, or the eval is broken.
-    full_text = "\n".join(c.text for c in stored).lower()
-    bad_labels = [phrase for _, phrase in QUERIES if phrase.lower() not in full_text]
-    if bad_labels:
-        print(f"\nLabel error: these phrases are not in the document: {bad_labels}")
-        return
+    missing = [phrase for _, phrase in queries if not relevant_ordinals(stored, phrase)]
+    if missing:
+        raise SystemExit(f"Label error in {path.name}: not in the document: {missing}")
 
-    print(f"\n## Retrieval (top-{TOP_K}, {len(QUERIES)} labelled queries)\n")
-    print("| Query | Cosine search rank | In even sample? |")
-    print("|---|---|---|")
+    print(f"\n## {path.name}\n")
+    print(f"- {len(data) / 1024 / 1024:.1f} MB, {len(chunks)} chunks of {CHUNK_SIZE} chars, {CHUNK_OVERLAP} overlap")
+    problems = check_chunking(chunks, CHUNK_SIZE, CHUNK_OVERLAP)
+    print(f"- Structural problems: {len(problems)}")
+    for problem in problems:
+        print(f"  - {problem}")
+    print(f"- Embed + insert: {ingest_seconds:.1f}s ({len(chunks) / ingest_seconds:.1f} chunks/s)")
+    print("\n| Query | cosine | bm25 | even |")
+    print("|---|---|---|---|")
 
-    hits = 0
-    reciprocal_ranks = 0.0
-    baseline_hits = 0
-    for topic, phrase in QUERIES:
-        retrieved = search_chunks(document_id, topic, TOP_K)
-        rank = contains(retrieved, phrase)
-        in_baseline = contains(baseline, phrase) is not None
-        if rank is not None:
-            hits += 1
-            reciprocal_ranks += 1 / rank
-        if in_baseline:
-            baseline_hits += 1
-        print(f"| {topic} | {rank if rank else 'miss'} | {'yes' if in_baseline else 'no'} |")
+    totals = {method: Totals() for method in METHODS}
+    search_seconds: list[float] = []
+    for topic, phrase in queries:
+        relevant = relevant_ordinals(stored, phrase)
 
-    n = len(QUERIES)
-    print("\n### Totals\n")
-    print(f"- Hit rate@{TOP_K}, cosine search: {hits}/{n} ({hits / n:.0%})")
-    print(f"- Hit rate@{TOP_K}, even-sample baseline: {baseline_hits}/{n} ({baseline_hits / n:.0%})")
-    print(f"- MRR, cosine search: {reciprocal_ranks / n:.2f}")
-    print(f"- Chunks searched per query: {len(stored)}; chunks sent to the model: {TOP_K}")
+        started = time.perf_counter()
+        by_cosine = search_chunks(document_id, topic, TOP_K)
+        search_seconds.append(time.perf_counter() - started)
+
+        results = {
+            "cosine": score(by_cosine, relevant, TOP_K),
+            "bm25": score(bm25_search(bm25, stored, topic, TOP_K), relevant, TOP_K),
+            "even": score(baseline, relevant, TOP_K),
+        }
+        for method, s in results.items():
+            totals[method].scores.append(s)
+        cells = " | ".join(str(results[m].rank) if results[m].rank else "miss" for m in METHODS)
+        print(f"| {topic} | {cells} |")
+
+    print(f"\n{TOTALS_HEADER}")
+    for method in METHODS:
+        print(totals[method].row(method))
+
+    return DocumentResult(len(chunks), ingest_seconds, totals, search_seconds)
+
+
+# ---------------------------------------------------------------------------
+# Chunk-size sweep: cosine only
+# ---------------------------------------------------------------------------
+
+
+def sweep_document(path: Path, queries: list[tuple[str, str]], stored_ids: list[str]) -> list[str]:
+    data = path.read_bytes()
+    rows = []
+    for size in SWEEP_SIZES:
+        overlap = size * CHUNK_OVERLAP // CHUNK_SIZE
+        chunks = pdf_to_chunks(data, size, overlap)
+        document_id = store_chunks(chunks)
+        stored_ids.append(document_id)
+        stored = list_chunks(document_id)
+
+        totals = Totals()
+        for topic, phrase in queries:
+            relevant = relevant_ordinals(stored, phrase)
+            if not relevant:
+                continue  # A fingerprint can straddle a boundary at a small size.
+            totals.scores.append(score(search_chunks(document_id, topic, TOP_K), relevant, TOP_K))
+
+        rows.append(
+            f"| {path.name} | {size} / {overlap} | {len(chunks)} | {totals.hits}/{totals.n}"
+            f" ({totals.hits / totals.n:.0%}) | {totals.mean('rr'):.2f} | {totals.mean('ndcg'):.2f} |"
+        )
+    return rows
+
+
+# ---------------------------------------------------------------------------
+
+
+def percentile(values: list[float], p: float) -> float:
+    ordered = sorted(values)
+    return ordered[min(len(ordered) - 1, int(p / 100 * len(ordered)))]
+
+
+def main(target: str, sweep: bool) -> None:
+    path = Path(target)
+    paths = sorted(path.glob("*.pdf")) if path.is_dir() else [path]
+    labelled = [p for p in paths if p.name in QUERIES]
+    for p in paths:
+        if p not in labelled:
+            print(f"(skipping {p.name}: no entry in evals/queries.py)")
+    if not labelled:
+        raise SystemExit("Nothing to evaluate.")
+
+    # One connection for the whole run. Per-call connects are fine for the
+    # service's two calls per upload; here they would be hundreds, and a Neon
+    # connect can take seconds.
+    store.shared = store._connect()
+
+    stored_ids: list[str] = []
+    try:
+        results = [evaluate_document(p, QUERIES[p.name], stored_ids) for p in labelled]
+
+        overall = {method: Totals() for method in METHODS}
+        search_seconds: list[float] = []
+        for result in results:
+            for method in METHODS:
+                overall[method].scores.extend(result.totals[method].scores)
+            search_seconds.extend(result.search_seconds)
+
+        print(f"\n## All documents ({len(results)} PDFs, {overall['cosine'].n} queries, top-{TOP_K})\n")
+        print(TOTALS_HEADER)
+        for method in METHODS:
+            print(overall[method].row(method))
+
+        total_chunks = sum(r.chunks for r in results)
+        total_ingest = sum(r.ingest_seconds for r in results)
+        print("\n### Latency\n")
+        print(f"- Embed + insert: {total_chunks} chunks in {total_ingest:.1f}s ({total_chunks / total_ingest:.1f} chunks/s)")
+        print(
+            f"- Cosine search (embed query + pgvector round trip): p50 {percentile(search_seconds, 50) * 1000:.0f} ms,"
+            f" p95 {percentile(search_seconds, 95) * 1000:.0f} ms over {len(search_seconds)} queries"
+        )
+
+        if sweep:
+            print(f"\n## Chunk-size sweep (cosine, top-{TOP_K})\n")
+            print(f"| Document | Size / overlap | Chunks | Hit@{TOP_K} | MRR | nDCG@{TOP_K} |")
+            print("|---|---|---|---|---|---|")
+            for p in labelled:
+                for row in sweep_document(p, QUERIES[p.name], stored_ids):
+                    print(row)
+    finally:
+        for document_id in stored_ids:
+            delete_document(document_id)
+        store.shared.close()
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    positional = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if len(positional) != 1:
         print(__doc__)
         sys.exit(1)
-    main(sys.argv[1])
+    main(positional[0], sweep="--sweep" in sys.argv)
