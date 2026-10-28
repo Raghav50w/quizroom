@@ -2,7 +2,7 @@
 
 Turn a topic, your notes, or a PDF into a multiple-choice quiz, then play it — solo, or live with friends on their phones.
 
-**Live:** https://quizroom-n4qd.onrender.com · **Try it:** [sample quiz](https://quizroom-n4qd.onrender.com/q/sample)
+**Live:** https://quizroom-1-wigu.onrender.com · **Try it:** [sample quiz](https://quizroom-1-wigu.onrender.com/q/sample)
 
 > Free instance — the first request after ~15 minutes idle takes about 50 seconds to wake.
 
